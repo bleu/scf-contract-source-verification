@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["hello-soroban"]
+
+# Reproducible-build profile for the WASM. The verification primitive depends on
+# byte-for-byte determinism, so we pin codegen knobs here at the workspace root
+# (cargo ignores [profile.*] in non-root members). `overflow-checks = true` is
+# also required by `stellar contract build`. Combined with `--locked` and a
+# pinned toolchain image, this keeps the rebuilt WASM's SHA-256 stable.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true

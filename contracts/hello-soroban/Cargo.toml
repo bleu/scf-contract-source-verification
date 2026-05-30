@@ -1,0 +1,25 @@
+[package]
+name = "hello-soroban"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Minimal Soroban sample contract used as the verification fixture for Soroscan Verify."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+doctest = false
+
+# soroban-sdk pinned to the 25.3.x line: this is the version OpenZeppelin's
+# stellar-contracts =0.7.1 (Bleu's validated default base) requires (^25.3.0,
+# verified via crates.io). Pinning here keeps the fixture aligned with the
+# toolchain a real OZ-composed contract would reproduce.
+[dependencies]
+soroban-sdk = "=25.3.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "=25.3.1", features = ["testutils"] }
+
+# NOTE: the reproducible-build [profile.release] lives in the WORKSPACE ROOT
+# Cargo.toml (../Cargo.toml). Cargo ignores [profile.*] in non-root workspace
+# members, so it must be set there to actually apply to this crate's WASM.
