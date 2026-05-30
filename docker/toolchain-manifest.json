@@ -1,0 +1,24 @@
+{
+  "$comment": "Pinned toolchain manifest for the MVP single-toolchain reproducible-build image. The on-chain WASM hash is reproducible only against THIS exact toolchain. For the Testnet tranche, image selection becomes automatic via SEP-46 contractmetav0 keys (rsver, rssdkver).",
+  "image": "soroscan-verify-builder:rust-1.91.1-cli-26.1.0",
+  "baseImage": "rust:1.91.1-bookworm",
+  "baseImageDigest": "TODO: pin via `docker buildx imagetools inspect rust:1.91.1-bookworm` and record the sha256 here",
+  "rust": "1.91.1",
+  "cargo": "1.91.1",
+  "stellarCli": "26.1.0",
+  "target": "wasm32v1-none",
+  "buildCommand": "stellar contract build --locked",
+  "sorobanSdk": "25.3.1",
+  "fixture": {
+    "contractId": "CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB",
+    "wasmSha256": "6fe7bd58e5a33dc27daefc74acfae6eb70f101fdbde860475cf18fde87288e4b",
+    "wasmBytes": 1060,
+    "network": "testnet",
+    "uploadTx": "0159a5825a1747ae76abb610c130fe42bd4de7d40fb0ba86c7338056faf8f971",
+    "deployTx": "3f5517e986a8666fe8f9da401b2c8fe8d51d08ddd4e0e8cfb90be29d37266552"
+  },
+  "notes": [
+    "soroban-sdk pinned to 25.3.1, the version OpenZeppelin stellar-contracts =0.7.1 requires (^25.3.0, verified via crates.io sparse index). Keeps the fixture aligned with Bleu's validated OZ default base.",
+    "wasm-opt/--optimize determinism across machines is an open question (see scope openQuestions); MVP demonstrates determinism via repeated local clean builds with the same toolchain (two cargo-clean rebuilds -> identical hash)."
+  ]
+}
