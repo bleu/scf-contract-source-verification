@@ -1,0 +1,16 @@
+# Rust
+contracts/target/
+**/*.rs.bk
+
+# Node
+node_modules/
+reader/dist/
+*.tsbuildinfo
+
+# Stellar local keys / aliases (never commit secret keys)
+.stellar/
+.soroban/
+
+# OS / editor
+.DS_Store
+*.log

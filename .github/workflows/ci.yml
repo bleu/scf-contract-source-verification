@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contract:
+    name: Soroban contract (build + test + WASM)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.1
+          targets: wasm32v1-none
+
+      - name: Install stellar-cli (pinned)
+        run: cargo install --locked stellar-cli --version 26.1.0
+
+      - name: cargo test (--locked)
+        run: cargo test --locked
+
+      - name: Reproducible WASM build (--locked)
+        run: stellar contract build --locked
+
+      - name: Print WASM SHA-256
+        run: shasum -a 256 target/wasm32v1-none/release/hello_soroban.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hello_soroban.wasm
+          path: contracts/target/wasm32v1-none/release/hello_soroban.wasm
+
+  reader:
+    name: Chain reader + verify CLI (TS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: reader
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+          cache-dependency-path: reader/pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Unit tests (no network)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm run build
+
+  # Live testnet integration is opt-in (requires network to soroban-testnet RPC).
+  # Runs only on main to avoid flaky PR failures from RPC availability.
+  integration:
+    name: Live testnet integration (opt-in)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        working-directory: reader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.0
+          cache: pnpm
+          cache-dependency-path: reader/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Live chain-read test against deployed fixture
+        env:
+          SOROSCAN_INTEGRATION: "1"
+        run: pnpm exec vitest run test/integration.testnet.test.ts
