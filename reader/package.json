@@ -1,0 +1,30 @@
+{
+  "name": "@soroscan/verify-reader",
+  "version": "0.1.0",
+  "description": "Chain reader + verify-by-contract-ID CLI for Soroscan Verify. Fetches a deployed Soroban contract's on-chain WASM and SHA-256 via Stellar RPC and asserts byte-for-byte equality against a locally rebuilt WASM.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "soroscan-verify": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "15.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.11.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
