@@ -13,8 +13,8 @@
 #   - exact stellar-cli version
 #   - the wasm32v1-none target
 #
-# Build:
-#   docker build -t soroscan-verify-builder:rust-1.91.1-cli-26.1.0 ./docker
+# Build (context = repo root, so the fixture's lockfile can be prefetched):
+#   docker build -f docker/Dockerfile -t soroscan-verify-builder:rust-1.91.1-cli-26.1.0 .
 #
 # Run (compile a repo mounted at /work, network-isolated for determinism):
 #   docker run --rm --network=none -v "$PWD/contracts":/work \
@@ -45,6 +45,14 @@ ENV SOURCE_DATE_EPOCH=1700000000 \
 # wasm32v1-none is the current Soroban build target (requires Rust >= 1.84).
 RUN rustup target add wasm32v1-none
 
+# libdbus is a runtime dependency of the official stellar-cli release binary
+# (it links libdbus-1.so.3 for OS keychain access) and is not in the rust base
+# image.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libdbus-1-3; \
+    rm -rf /var/lib/apt/lists/*
+
 # Install the pinned stellar-cli from the official release tarball, verified by
 # SHA-256. We intentionally do NOT `cargo install` it: stellar-cli 26.1.0 needs
 # rustc >= 1.93 to compile, while this image's rustc must stay at the pinned
@@ -63,6 +71,20 @@ RUN set -eux; \
     tar -xzf /tmp/stellar-cli.tar.gz -C /usr/local/bin stellar; \
     rm /tmp/stellar-cli.tar.gz; \
     stellar version
+
+# Prefetch the fixture workspace's locked dependency graph into the image's
+# cargo home, using only the manifests and Cargo.lock (a stub lib.rs satisfies
+# target discovery; no contract code is compiled into the image). This is the
+# staged source-acquisition model from docs/ARCHITECTURE.md §8: dependencies
+# arrive while the image is built, so the actual build can run with
+# --network=none and never fetch.
+COPY contracts/Cargo.toml contracts/Cargo.lock /tmp/prefetch/
+COPY contracts/hello-soroban/Cargo.toml /tmp/prefetch/hello-soroban/
+RUN set -eux; \
+    mkdir -p /tmp/prefetch/hello-soroban/src; \
+    touch /tmp/prefetch/hello-soroban/src/lib.rs; \
+    cargo fetch --locked --manifest-path /tmp/prefetch/Cargo.toml; \
+    rm -rf /tmp/prefetch
 
 WORKDIR /work
 
