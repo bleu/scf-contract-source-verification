@@ -6,15 +6,18 @@
 
 # Soroscan Verify — Soroban Contract Source Verification Service (MVP)
 
-Open-source, Docker-based **reproducible-build** verification for Soroban
-contracts. It proves that a deployed contract's on-chain WASM (its SHA-256 hash)
-is byte-for-byte the published source — by independently **re-compiling** the
-source on neutral infrastructure and comparing hashes, not by trusting a build
-provenance attestation.
+Open-source, **[SEP-0058]-native** source verification for Soroban contracts.
+SEP-58 ("Contract Build Reproducibility for Verification") defines the metadata
+a contract publishes so that anyone can re-run its build; Soroscan Verify is
+the service that does the re-running: it reads the SEP-58 fields from the
+deployed Wasm, rebuilds the source inside a digest-pinned, network-isolated
+build image, and byte-compares the result against the on-chain bytecode —
+proving (or refuting) that *this source produces this Wasm*.
 
-This repo is the working MVP of the service: a single pinned toolchain, a
-chain reader, and a verify-by-contract-ID CLI. The full design — the hosted
-multi-verifier service, `/v1` public API, UI, multi-toolchain selection, and
+This repo is the working MVP of the service: the SEP-58 metadata reader, the
+chain reader, the verdict and image-trust logic, the content-addressed tarball
+flow, and a pinned build image — all tested against a live testnet fixture.
+The full design — hosted multi-verifier service, `/v1` public API, UI, and
 explorer integrations — is specified in
 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (see [Roadmap](#roadmap)).
 
@@ -22,27 +25,57 @@ License: **Apache-2.0**.
 
 ## Why this exists
 
-Soroban contracts are deployed as opaque WASM blobs. When a contract is uploaded
-(`InvokeHostFunction` / UploadContractWasm), the ledger stores the bytecode in a
-`ContractCodeEntry` keyed by the **SHA-256 of the executable** — the Stellar docs
-describe the upload output as "the Sha256 hash of the executable". A deployed
-instance references that WASM by hash.
+Soroban contracts are deployed as opaque Wasm blobs. When a contract is
+uploaded, the ledger stores the bytecode in a `ContractCodeEntry` keyed by the
+**SHA-256 of the executable**, and every contract instance references its code
+by that hash. So source verification reduces to one testable question:
 
-So source verification reduces to one question:
-
-> **Can we rebuild a candidate source repo into a WASM whose SHA-256 equals the
+> **Can we rebuild a candidate source into a Wasm whose SHA-256 equals the
 > hash the ledger reports for this contract?**
 
-Today's tooling (stellar.expert's build workflow, the Contract Build
-Verification SEP — [SEP-0055], formalized from [discussion #1573]) relies on
-GitHub Attestations, which attest that *a GitHub Action ran and produced a
-WASM*. The official Stellar Lab Contract Explorer is explicit that its "Build
-Verified" badge "only means that the GitHub Action run has attested to have
-built the Wasm, but does not verify the source code." Soroscan Verify adds the
-complementary **independent, neutral, reproducible-build** layer ([SEP-0058])
-— the Soroban analogue of [Sourcify]'s bytecode-match model for Ethereum (full
-match vs. partial match). SEP-55 answers "did trusted CI build this?"; the
-rebuild layer answers "does this source produce these bytes?".
+Two SEPs address contract trust from different angles, and they are
+**complementary, not competing**:
+
+- **[SEP-0055] (Contract Build Verification)** answers *"did a trusted CI
+  pipeline build this Wasm from this repo?"* via GitHub artifact attestations
+  — provenance from a named builder, available instantly, no rebuild cost.
+- **[SEP-0058] (Contract Build Reproducibility for Verification)** answers
+  *"does this source, in this environment, produce exactly these bytes?"* via
+  independent re-execution on neutral infrastructure — the Soroban analogue of
+  [Sourcify]'s bytecode-match model for Ethereum.
+
+SEP-58's own text calls the two complementary, addressing the same trust
+question with different trade-offs. A contract can and ideally does carry
+both; the service exposes them as **distinct trust levels** (separate API
+fields, never collapsed into one badge). This repo implements the SEP-58
+rebuild side.
+
+## The SEP-58 pipeline
+
+Every SEP-58 field drives one step of the verification pipeline. The fields
+normally travel in the Wasm's `contractmetav0` custom section ([SEP-0046] is
+the underlying meta transport); the full service also accepts them as an
+off-chain submission for contracts deployed before the tooling existed.
+
+| SEP-58 field | Meaning | Pipeline step that consumes it |
+|---|---|---|
+| `bldimg` | Build container image, **pinned by digest** | **Image-trust lookup** (MVP): checked against [`docker/allowlist.json`](docker/allowlist.json) and reported as the `imageTrust` tier on every verify result. In the full service the rebuild worker also pulls this image by digest — never by tag. |
+| `bldopt` | One build flag per entry (repeatable) | **Rebuild invocation**: each flag is appended, in order, to `stellar contract build` inside the container (hosted rebuild — roadmap; the MVP builds with the pinned `--locked` invocation and surfaces `bldopt` via `read`). |
+| `source_repo` | HTTPS URL of the source repository | **Source acquisition, `public-repo` mode**: clone the repo (acquisition is roadmap; the field is parsed and surfaced by `read` today). |
+| `source_rev` | Full 40-char commit SHA-1 | **Source acquisition, `public-repo` mode**: check out exactly this commit — branch and tag names are not accepted. |
+| `tarball_url` | Where to download the source tarball | **Source acquisition, `hosted-tarball` mode**: download over HTTPS or IPFS (roadmap). |
+| `tarball_sha256` | SHA-256 of the source tarball | **Integrity gate** (MVP): `verify --tarball` refuses to unpack or build a tarball whose digest doesn't match. On its own, it is the lookup key for `content-addressed` private source. |
+
+From these fields the reader infers the contract's **source mode** — one per
+conformant combination in SEP-58 §2:
+
+| Source mode | SEP-58 fields present | Meaning |
+|---|---|---|
+| `public-repo` | `source_repo` + `source_rev` | Source is a VCS checkout at a pinned revision. |
+| `hosted-tarball` | `tarball_url` + `tarball_sha256` | Source is a hosted archive pinned by digest. |
+| `hosted-tarball-unpinned` | `tarball_url` alone | Verifier downloads and extracts, trusting the host (no digest pin). |
+| `content-addressed` | `tarball_sha256` alone | Private source committed by digest only; the archive is handed to the verifier out of band. |
+| `none` | — | No SEP-58 source identifiers found. |
 
 ## Architecture (data flow)
 
@@ -53,18 +86,20 @@ The diagram uses the SDK method names as they actually exist on
 
 ```mermaid
 flowchart TD
-    Dev[Developer / Auditor] -->|contract ID or wasm hash + source repo| UI[Verification UI - React/Next - roadmap]
+    Dev[Developer / Auditor] -->|contract ID or wasm hash + SEP-58 source claim| UI[Verification UI - React/Next - roadmap]
     UI -->|POST /v1/verifications - roadmap| API[Public API - /v1 - roadmap]
     API -->|enqueue job| Q[Build Queue - roadmap]
     API -->|fetch on-chain wasm| Reader[Chain Reader - stellar-sdk RPC - MVP]
     Reader -->|getContractWasmByContractId / getContractWasmByHash| RPC[(Stellar RPC - ContractCodeEntry - SHA-256 hash)]
-    Reader -->|SEP-46 contractmetav0 - SEP-58 bldimg bldopt source_repo source_rev| API
+    Reader -->|SEP-58 fields from contractmetav0 - bldimg bldopt source_repo source_rev tarball_url tarball_sha256| API
+    Reader -->|bldimg digest| Allow{Allowlist lookup - docker/allowlist.json - MVP}
+    Allow -->|imageTrust tier| Match
     Q --> Worker[Reproducible Build Worker - pinned Docker - MVP]
-    Worker -->|pull pinned image by digest| Docker[(Docker image - toolchain - MVP)]
-    Worker -->|clone repo@commit or local source| Git[(Source - repo / tarball / content-addressed)]
+    Worker -->|pull pinned image by digest| Docker[(Build image - sdf-trusted or fallback - MVP)]
+    Worker -->|repo@commit - roadmap - or digest-gated tarball - MVP| Git[(Source - repo / tarball / content-addressed)]
     Worker -->|stellar contract build --locked - target wasm32v1-none| WASM[Rebuilt WASM + SHA-256 - MVP]
-    WASM -->|compare hash and section diff| Match{Match verdict - MVP}
-    Match -->|full / metadata-only / none| DB[(Verification registry - ed25519-signed results - roadmap)]
+    WASM -->|compare hash and section diff| Match{Match verdict + image trust - MVP}
+    Match -->|FULL_MATCH / METADATA_ONLY_MATCH / NO_MATCH / ERROR| DB[(Verification registry - ed25519-signed results - roadmap)]
     DB -->|mirror artifacts| IPFS[(IPFS pin - roadmap)]
     DB --> Badge[Badge endpoint - GET /v1/badge/id.svg - roadmap]
     Badge --> Explorer[Explorers - Stellar Expert / Stellar Lab Contract Explorer - roadmap]
@@ -78,30 +113,31 @@ not built here.
 
 ## Stack (plain English)
 
+- **SEP-58 metadata reader** (`reader/src/sep58.ts`): extracts the six SEP-58
+  fields (`bldimg`, `bldopt` (repeatable), `source_repo`, `source_rev`,
+  `tarball_url`, `tarball_sha256`) from the decoded meta entries and infers
+  the source mode.
+- **contractmeta reader** (`reader/src/contractmeta.ts`): parses the
+  [SEP-0046] `contractmetav0` Wasm custom section — the transport the SEP-58
+  fields travel in — and decodes its XDR `SCMetaEntry` records. Also powers
+  the `METADATA_ONLY_MATCH` verdict (strip the section, re-compare).
+- **Chain reader** (`reader/src/chain-reader.ts`): TypeScript over
+  `@stellar/stellar-sdk` RPC. Fetches the on-chain Wasm + SHA-256 for a
+  contract ID (`getContractWasmByContractId`) or a Wasm hash
+  (`getContractWasmByHash`).
+- **Image trust** (`reader/src/image-trust.ts`): derives the `imageTrust` tier
+  for a contract's `bldimg` from [`docker/allowlist.json`](docker/allowlist.json).
+- **Tarball flow** (`reader/src/tarball.ts`, `reader/src/builder.ts`):
+  digest-gated unpacking of content-addressed source tarballs (path-traversal
+  safe) and the rebuild step (local pinned toolchain or the pinned Docker
+  image).
+- **Verify CLI** (`reader/src/cli.ts`, bin `soroscan-verify`): `read` and
+  `verify` subcommands — see [Quick start](#quick-start).
+- **Pinned build image** (`docker/Dockerfile`): the repo's fallback toolchain
+  image — see [Build images](#build-images-primary-path-and-fallback).
 - **Sample contract** (`contracts/hello-soroban`): a minimal `soroban-sdk`
   contract, deployed to testnet, that the pipeline rebuilds and hash-matches.
   Rust, `wasm32v1-none`, built with `stellar contract build --locked`.
-- **Pinned build image** (`docker/Dockerfile`): one content-addressed Docker
-  image per toolchain. Pins rustc/cargo, `stellar-cli`, and the wasm target so a
-  build is independently re-runnable: pull the image by digest, run it, get the
-  same hash. Runs network-isolated (`--network=none`) during compile.
-- **Chain reader** (`reader/src/chain-reader.ts`): TypeScript over
-  `@stellar/stellar-sdk` RPC. Fetches the on-chain WASM + SHA-256 for a contract
-  ID (`getContractWasmByContractId`) or a WASM hash (`getContractWasmByHash`).
-- **contractmeta reader** (`reader/src/contractmeta.ts`): parses the SEP-46
-  `contractmetav0` WASM custom section, used for the metadata-only-mismatch
-  verdict, and decodes its XDR `SCMetaEntry` records.
-- **SEP-58 metadata** (`reader/src/sep58.ts`): extracts the six SEP-58 fields
-  (`bldimg`, `bldopt` (repeatable), `source_repo`, `source_rev`,
-  `tarball_url`, `tarball_sha256`) from the decoded entries and infers the
-  **source mode**, one per conformant combination in SEP-58 §2: `public-repo`
-  (`source_repo` + `source_rev`), `hosted-tarball` (`tarball_url` +
-  `tarball_sha256`), `hosted-tarball-unpinned` (`tarball_url` alone),
-  `content-addressed` (`tarball_sha256` alone), or `none`.
-- **Verify CLI** (`reader/src/cli.ts`, bin `soroscan-verify`): `read` and
-  `verify` subcommands. `read` works by `--id` or `--wasm-hash` and prints the
-  meta entries, SEP-58 fields, and source mode alongside the hash. `verify`
-  rebuilds-compares and exits 0 only on a byte-for-byte full match.
 
 ## Verification primitive (verified in this repo)
 
@@ -117,12 +153,16 @@ over RPC. All are:
 
 ### Verdict model (Sourcify analogue)
 
+Every verification carries two orthogonal dimensions: the **match verdict**
+(did the rebuild reproduce the bytes?) and the **image trust tier** (how
+trustworthy is the environment that the contract claims built it?).
+
 | Verdict | Meaning |
 |---------|---------|
 | `FULL_MATCH` | Rebuilt WASM is byte-identical to on-chain WASM (SHA-256 equal). The deployed blob **is** the source. |
 | `METADATA_ONLY_MATCH` | WASM differs **only** in the `contractmetav0` custom section (behaviorally identical) — Sourcify "partial match" analogue. |
 | `NO_MATCH` | Hashes differ and the difference is not metadata-only. |
-| `ERROR` | Could not fetch/compare (network, malformed ID, etc.). |
+| `ERROR` | Could not fetch/compare (network, malformed ID, tarball digest mismatch, etc.). |
 
 ### Image trust (orthogonal to the verdict)
 
@@ -138,8 +178,46 @@ SEP-58 `bldimg` in the checked-in [`docker/allowlist.json`](docker/allowlist.jso
 | `arbitrary` | A `bldimg` was declared but is not allowlisted. |
 | `unknown` | No `bldimg` metadata available. |
 
-Eviction from the allowlist downgrades the tier reported for past
-verifications; it never deletes verification records.
+A `FULL_MATCH` from an `arbitrary` image is weaker evidence of faithfulness to
+source than one from an allowlisted image — which is why the two dimensions are
+reported together but never merged.
+
+## Build images: primary path and fallback
+
+The **primary path** is SDF-published build images: contracts declare a
+`bldimg` pointing at a `stellar/stellar-cli` image from
+[stellar-cli-docker] — which is explicitly SEP-58-compatible and itself
+mandates digest pinning — and the verifier checks that digest against the
+allowlist, granting the `sdf-trusted` tier. The allowlist file documents the
+exact entry shape for these images; their published digests are recorded as
+SDF releases them.
+
+This repo's own pinned image (`docker/Dockerfile`, recorded in
+[`docker/toolchain-manifest.json`](docker/toolchain-manifest.json)) is the
+**interim/fallback** image: a publicly-auditable toolchain (pinned rustc,
+`stellar-cli`, and Wasm target, built from a checked-in Dockerfile, run with
+`--network=none` during compile) used for local verification and for contracts
+that don't reference an SDF image. It is allowlisted at the
+`publicly-auditable` tier, deliberately below `sdf-trusted`.
+
+```bash
+# Build the image (repo root as context: the fixture's locked dependency
+# graph is prefetched into the image, so the actual compile can run with
+# --network=none and never fetch — the staged source-acquisition model from
+# docs/ARCHITECTURE.md §8).
+docker build -f docker/Dockerfile -t soroscan-verify-builder:rust-1.91.1-cli-26.1.0 .
+
+# Rebuild the contract network-isolated and check the hash
+docker run --rm --network=none \
+  -v "$PWD/contracts":/work \
+  soroscan-verify-builder:rust-1.91.1-cli-26.1.0
+shasum -a 256 contracts/target/wasm32v1-none/release/hello_soroban.wasm
+```
+
+**Allowlist eviction downgrades; it never deletes.** If a digest is removed
+from the allowlist — say a vulnerability turns up in an image — past
+verifications that used it keep their records; only the trust tier reported
+for them is downgraded. Trust signals age; evidence does not.
 
 ## Quick start
 
@@ -159,35 +237,41 @@ pnpm test                                # unit tests (no network)
 pnpm run build
 
 # 3. Read the on-chain WASM hash + SEP-58 source metadata for the deployed
-#    fixture (also accepts --wasm-hash <hex> instead of --id)
+#    fixture: prints the contractmetav0 entries, the SEP-58 fields, and the
+#    inferred source mode (also accepts --wasm-hash <hex> instead of --id)
 node dist/cli.js read \
   --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB
 
-# 4. Verify by ID: rebuild-compare against the chain (exit 0 only on FULL_MATCH)
+# 4. Verify by ID: rebuild-compare against the chain. Prints the verdict and
+#    the imageTrust tier; exit 0 only on FULL_MATCH.
 node dist/cli.js verify \
   --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB \
   --wasm ../contracts/target/wasm32v1-none/release/hello_soroban.wasm
+
+# 5. Verify from a content-addressed source tarball (the SEP-58
+#    tarball_sha256 commitment model): the digest is checked FIRST — a tarball
+#    that doesn't match is never unpacked or built — then the source is
+#    unpacked to a fresh temp dir, rebuilt, and compared. --docker rebuilds
+#    inside the pinned image (build it first — see "Build images" above).
+#    Omitting --docker uses the local toolchain, which must be rust 1.91.1
+#    *outside* the repo tree too: the rebuild runs in a temp dir, where
+#    directory-scoped version managers (asdf, direnv) won't see .tool-versions.
+tar -czf /tmp/hello-soroban-src.tar.gz -C ../contracts Cargo.toml Cargo.lock hello-soroban
+node dist/cli.js verify \
+  --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB \
+  --tarball /tmp/hello-soroban-src.tar.gz \
+  --tarball-sha256 "$(shasum -a 256 /tmp/hello-soroban-src.tar.gz | cut -d' ' -f1)" \
+  --docker
 ```
 
-Or run the whole thing via the driver:
+All subcommands take `--json` for machine-readable output. Or run the whole
+thing via the driver:
 
 ```bash
 scripts/verify.sh CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB
-# add --docker to build inside the pinned image
+# add --docker to build inside the pinned image;
+# add --tarball <path> --tarball-sha256 <digest> for the tarball flow
 ```
-
-## Deterministic build via Docker
-
-```bash
-docker build -t soroscan-verify-builder:rust-1.91.1-cli-26.1.0 ./docker
-docker run --rm --network=none \
-  -v "$PWD/contracts":/work \
-  soroscan-verify-builder:rust-1.91.1-cli-26.1.0
-shasum -a 256 contracts/target/wasm32v1-none/release/hello_soroban.wasm
-```
-
-For true reproducibility, pin the base image **by digest** and publish it in
-`docker/toolchain-manifest.json` (the manifest records the resolved digest).
 
 ## Live testnet fixture
 
@@ -213,36 +297,46 @@ test/integration.testnet.test.ts`.
   an open question handled by pinning the full toolchain via Docker image digest
   and by the `METADATA_ONLY_MATCH` verdict for behaviorally-identical builds.
 - **TESTNET ONLY.** No mainnet config is wired up; `resolveNetwork` rejects
-  anything but `testnet`.
+  anything but `testnet`. (The full service runs against both networks —
+  roadmap phase 2.)
+- **The fixture predates the SEP-58 stamping tooling**, so its on-chain
+  metadata carries no SEP-58 fields (`read` reports source mode `none` and
+  `verify` reports `imageTrust: unknown`). That is exactly the population the
+  retroactive, off-chain submission path in
+  [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md) exists for; contracts built
+  with the in-progress `stellar contract build --verifiable`
+  ([stellar-cli#2585]) get the fields stamped in automatically.
 - **Soroban SDK version.** This fixture pins `soroban-sdk =25.3.1`, the version
   OpenZeppelin's `stellar-contracts` `0.7.1` requires (`^25.3.0`, verified via the
   crates.io sparse index) — Bleu's validated default base. OZ-composed contracts
   reproduce on this same SDK; real submissions select their build image by the
-  toolchain advertised in their on-chain `contractmetav0` (`rsver`/`rssdkver`).
+  SEP-58 `bldimg` they advertise.
 
 ## Roadmap
 
-The full roadmap is in [docs/ARCHITECTURE.md §11](docs/ARCHITECTURE.md); in
-summary:
+This repo is the MVP core; the full plan, with an objective completion test
+per phase, is in [docs/ARCHITECTURE.md §11](docs/ARCHITECTURE.md). In summary:
 
-| Phase | Scope |
-|-------|-------|
-| **MVP (this repo)** | Single pinned toolchain, chain reader, verify-by-ID CLI, deterministic hash-match proof on testnet. |
-| 1 — Self-hostable verifier core | ed25519 result signing, image allowlist + trust tiers, all three SEP-58 source modes, IPFS retrieval, sandboxed rebuild workers. |
-| 2 — Audit + hosted deployment | Independent security audit; public **testnet + mainnet** deployment; retroactive (off-chain metadata) submission path. |
-| 3 — Stable `/v1` API + SDK + docs | `GET /v1/contract/{id}`, `GET /v1/wasm/{hash}`, `POST /v1/verifications`, `GET /v1/verifiers`; client SDK; allowlist policy doc; under-15-minute walkthrough. |
-| 4 — Integrations | Badge endpoint (`GET /v1/badge/{id}.svg`), explorer embed, stellar-cli interaction, partner reference integration. |
-| 5 — Production operations | Runbook, monitoring, on-call, peer-operator support. |
+| Milestone | Scope | Done when |
+|-----------|-------|-----------|
+| **MVP (this repo)** | SEP-58 metadata reader, chain reader, verdict + image-trust logic, content-addressed tarball flow, pinned build image, deterministic hash-match proof on testnet. | Shipped — see [Quick start](#quick-start). |
+| 1 — Self-hostable verifier core | ed25519 result signing, allowlist enforcement with downgrade semantics, all three SEP-58 source modes with IPFS and the artifact store, sandboxed rebuild workers, written threat model. | A third party can stand up a full verifier from docs alone and verify the MVP fixture end to end. |
+| 2 — Security audit + hosted deployment | Independent security audit; hosted service live on **testnet + mainnet**, including the retroactive (off-chain metadata) submission path. | Audit report and remediations public; `GET /v1/contract/{id}` answers for both networks in production. |
+| 3 — Stable `/v1` API + SDK + docs | `GET /v1/contract/{id}`, `GET /v1/wasm/{hash}`, `POST /v1/verifications`, `GET /v1/verifiers`; client SDK; allowlist governance policy published. | An integrator goes from docs to rendering verification state without contacting us; the under-15-minute walkthrough passes in CI. |
+| 4 — Integrations | Badge endpoint (`GET /v1/badge/{id}.svg`), explorer embed, stellar-cli interaction in whichever shape the ecosystem standardizes, partner reference integration. | A partner surface renders results in production for both networks. |
+| 5 — Production operations | Runbook, monitoring, status page, on-call, peer-operator support. | SLO dashboards public; at least one external peer verifier running or in progress. |
 
 ## References
 
+- [SEP-0058] Contract Build Reproducibility for Verification (`bldimg`, `bldopt`, `source_repo`, `source_rev`, `tarball_url`, `tarball_sha256`)
+- [SEP-0055] Contract Build Verification (GitHub-Attestation provenance — the complementary trust level; formalized from [discussion #1573])
+- [SEP-0046] Contract Meta (`contractmetav0` / SCMetaEntry — the transport SEP-58 fields travel in)
+- [stellar-cli-docker] — SDF-published `stellar/stellar-cli` images (the primary `bldimg` path)
+- [stellar-cli#2585] `stellar contract build --verifiable` and [stellar-cli#2586] `stellar contract verify` — the in-progress local half of the SEP-58 story
 - Stellar CLI manual — `stellar contract build` (`--locked`, `--meta`, `--optimize`)
 - "Sha256 hash of the executable" — Stellar upgrading-contracts docs
 - Retrieve a contract code ledger entry (LedgerKeyContractCode / getLedgerEntries)
 - `@stellar/stellar-sdk` `rpc.Server` API reference (method names)
-- [SEP-0046] Contract Meta (`contractmetav0` / SCMetaEntry)
-- [SEP-0055] Contract Build Verification (GitHub-Attestation provenance; alongside [discussion #1573])
-- [SEP-0058] Contract Build Reproducibility for Verification (`bldimg`, `bldopt`, `source_repo`, `source_rev`, `tarball_url`, `tarball_sha256`)
 - [Sourcify] — Ethereum source verification (full vs partial match) prior art
 - OpenZeppelin `stellar-contracts` (Rust Soroban library)
 - Service design & roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -252,3 +346,6 @@ summary:
 [SEP-0058]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0058.md
 [discussion #1573]: https://github.com/orgs/stellar/discussions/1573
 [Sourcify]: https://github.com/ethereum/sourcify
+[stellar-cli-docker]: https://github.com/stellar/stellar-cli-docker
+[stellar-cli#2585]: https://github.com/stellar/stellar-cli/pull/2585
+[stellar-cli#2586]: https://github.com/stellar/stellar-cli/pull/2586
