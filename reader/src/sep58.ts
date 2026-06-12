@@ -28,20 +28,25 @@ export interface ScMetaEntry {
 }
 
 /**
- * How (if at all) the contract's metadata commits to its source:
+ * How (if at all) the contract's metadata commits to its source — one mode
+ * per conformant combination in SEP-58 §2:
  *
- *  - public-repo:       `source_repo` + `source_rev` — source is a public VCS
- *                       checkout at a pinned revision.
- *  - hosted-tarball:    `tarball_url` + `tarball_sha256` — source is a hosted
- *                       archive pinned by digest.
- *  - content-addressed: `tarball_sha256` alone — private source committed by
- *                       digest only; the verifier must be handed the archive
- *                       out of band.
- *  - none:              no SEP-58 source identifiers found.
+ *  - public-repo:             `source_repo` + `source_rev` — source is a VCS
+ *                             checkout at a pinned revision.
+ *  - hosted-tarball:          `tarball_url` + `tarball_sha256` — source is a
+ *                             hosted archive pinned by digest.
+ *  - hosted-tarball-unpinned: `tarball_url` alone — verifier downloads and
+ *                             extracts, trusting the host to keep serving the
+ *                             same bytes (no digest pin).
+ *  - content-addressed:       `tarball_sha256` alone — private source
+ *                             committed by digest only; the verifier must be
+ *                             handed the archive out of band.
+ *  - none:                    no SEP-58 source identifiers found.
  */
 export type SourceMode =
   | "public-repo"
   | "hosted-tarball"
+  | "hosted-tarball-unpinned"
   | "content-addressed"
   | "none";
 
@@ -148,14 +153,16 @@ export function extractSep58Fields(entries: ScMetaEntry[]): Sep58Fields {
  *
  * SEP-58 §2 defines no precedence — a wasm MAY carry more than one conformant
  * combination and verifiers MAY support any subset — so the order here is this
- * verifier's preference: a contract publishing both a repo pin and a tarball
- * pin reports `public-repo` (the more auditable channel). A field without its
- * required partner (e.g. `source_repo` without `source_rev`) does not qualify
- * its mode.
+ * verifier's preference, strongest commitment first: a contract publishing
+ * both a repo pin and a tarball pin reports `public-repo` (the more auditable
+ * channel), and a digest-pinned tarball outranks an unpinned URL. A required
+ * partner being absent (e.g. `source_repo` without `source_rev`) disqualifies
+ * the mode.
  */
 export function inferSourceMode(fields: Sep58Fields): SourceMode {
   if (fields.sourceRepo && fields.sourceRev) return "public-repo";
   if (fields.tarballUrl && fields.tarballSha256) return "hosted-tarball";
   if (fields.tarballSha256) return "content-addressed";
+  if (fields.tarballUrl) return "hosted-tarball-unpinned";
   return "none";
 }

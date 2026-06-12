@@ -87,11 +87,12 @@ Pieces labeled **MVP** are implemented and tested in this repo. Pieces labeled
   `contractmetav0` WASM custom section, used for the metadata-only-mismatch
   verdict, and decodes its XDR `SCMetaEntry` records.
 - **SEP-58 metadata** (`reader/src/sep58.ts`): extracts the six SEP-58 fields
-  (`bldimg`, `bldopt`, `source_repo`, `source_rev`, `tarball_url`,
-  `tarball_sha256`) from the decoded entries and infers the **source mode**:
-  `public-repo` (`source_repo` + `source_rev`), `hosted-tarball`
-  (`tarball_url` + `tarball_sha256`), `content-addressed` (`tarball_sha256`
-  alone), or `none`.
+  (`bldimg`, `bldopt` (repeatable), `source_repo`, `source_rev`,
+  `tarball_url`, `tarball_sha256`) from the decoded entries and infers the
+  **source mode**, one per conformant combination in SEP-58 §2: `public-repo`
+  (`source_repo` + `source_rev`), `hosted-tarball` (`tarball_url` +
+  `tarball_sha256`), `hosted-tarball-unpinned` (`tarball_url` alone),
+  `content-addressed` (`tarball_sha256` alone), or `none`.
 - **Verify CLI** (`reader/src/cli.ts`, bin `soroscan-verify`): `read` and
   `verify` subcommands. `read` works by `--id` or `--wasm-hash` and prints the
   meta entries, SEP-58 fields, and source mode alongside the hash. `verify`

@@ -221,9 +221,14 @@ describe("inferSourceMode", () => {
       "none",
     ],
     [
-      "tarball_url without tarball_sha256 does not qualify",
+      "tarball_url alone is hosted-tarball-unpinned (SEP-58 §2 third combination)",
       { tarballUrl: "https://x/src.tgz" },
-      "none",
+      "hosted-tarball-unpinned",
+    ],
+    [
+      "tarball_url alone with an incomplete repo pin is still hosted-tarball-unpinned",
+      { sourceRepo: "github:org/repo", tarballUrl: "https://x/src.tgz" },
+      "hosted-tarball-unpinned",
     ],
     [
       "repo pin wins over tarball pin when both are complete",
@@ -278,6 +283,13 @@ describe("extractContractMetaSection SEP-58 surface (synthetic modules)", () => 
       wasmWithMeta([["tarball_sha256", "aa".repeat(32)]]),
     );
     expect(r.sourceMode).toBe("content-addressed");
+  });
+
+  it("hosted-tarball-unpinned module", () => {
+    const r = extractContractMetaSection(
+      wasmWithMeta([["tarball_url", "https://x/s.tgz"]]),
+    );
+    expect(r.sourceMode).toBe("hosted-tarball-unpinned");
   });
 
   it("module with only SEP-46 entries reports mode none", () => {
