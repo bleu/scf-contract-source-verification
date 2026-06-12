@@ -1,5 +1,5 @@
 {
-  "$comment": "Pinned toolchain manifest for the MVP single-toolchain reproducible-build image. The on-chain WASM hash is reproducible only against THIS exact toolchain. For the Testnet tranche, image selection becomes automatic via SEP-46 contractmetav0 keys (rsver, rssdkver).",
+  "$comment": "Pinned toolchain manifest for the MVP single-toolchain reproducible-build image. The on-chain WASM hash is reproducible only against THIS exact toolchain. In the full service (docs/ARCHITECTURE.md), image selection is driven by the SEP-58 bldimg digest recorded in contractmetav0 or submitted off-chain.",
   "image": "soroscan-verify-builder:rust-1.91.1-cli-26.1.0",
   "baseImage": "rust:1.91.1-bookworm",
   "baseImageDigest": "TODO: pin via `docker buildx imagetools inspect rust:1.91.1-bookworm` and record the sha256 here",
