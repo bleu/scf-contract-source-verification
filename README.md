@@ -10,7 +10,7 @@ Open-source, **[SEP-0058]-native** source verification for Soroban contracts.
 SEP-58 ("Contract Build Reproducibility for Verification") defines the metadata
 a contract publishes so that anyone can re-run its build; Soroscan Verify is
 the service that does the re-running: it reads the SEP-58 fields from the
-deployed Wasm, rebuilds the source inside a digest-pinned, network-isolated
+deployed Wasm, rebuilds the source inside a pinned, network-isolated
 build image, and byte-compares the result against the on-chain bytecode —
 proving (or refuting) that *this source produces this Wasm*.
 
@@ -213,6 +213,13 @@ docker run --rm --network=none \
   soroscan-verify-builder:rust-1.91.1-cli-26.1.0
 shasum -a 256 contracts/target/wasm32v1-none/release/hello_soroban.wasm
 ```
+
+For true reproducibility the image must be referenced **by digest**, like any
+SEP-58 `bldimg`. This repo's image is currently built locally and pinned by
+version tag only — its registry digest is recorded in
+[`docker/toolchain-manifest.json`](docker/toolchain-manifest.json) and
+[`docker/allowlist.json`](docker/allowlist.json) once the image is published
+(both carry an explicit placeholder until then).
 
 **Allowlist eviction downgrades; it never deletes.** If a digest is removed
 from the allowlist — say a vulnerability turns up in an image — past
