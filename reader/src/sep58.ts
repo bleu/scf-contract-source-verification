@@ -59,14 +59,16 @@ export interface Sep58Fields {
   tarballSha256?: string;
 }
 
-const SEP58_KEYS: Record<string, keyof Sep58Fields> = {
-  bldimg: "bldimg",
-  bldopt: "bldopt",
-  source_repo: "sourceRepo",
-  source_rev: "sourceRev",
-  tarball_url: "tarballUrl",
-  tarball_sha256: "tarballSha256",
-};
+// Map, not a plain object: entry keys come from untrusted wasm, and a plain
+// object lookup would hit Object.prototype for keys like "constructor".
+const SEP58_KEYS = new Map<string, keyof Sep58Fields>([
+  ["bldimg", "bldimg"],
+  ["bldopt", "bldopt"],
+  ["source_repo", "sourceRepo"],
+  ["source_rev", "sourceRev"],
+  ["tarball_url", "tarballUrl"],
+  ["tarball_sha256", "tarballSha256"],
+]);
 
 /**
  * Decode the raw `contractmetav0` payload into SCMetaV0 entries.
@@ -86,6 +88,9 @@ export function decodeContractMetaEntries(raw: Uint8Array): ScMetaEntry[] {
     if (pos + 4 > raw.length) throw new Error("truncated XDR string length");
     const len = view.getUint32(pos);
     pos += 4;
+    // Guard before the padding math: (len + 3) & ~3 wraps at 2^32, so a
+    // hostile length near UINT32_MAX could otherwise pass the bounds check.
+    if (len > raw.length - pos) throw new Error("truncated XDR string body");
     const padded = (len + 3) & ~3;
     if (pos + padded > raw.length) throw new Error("truncated XDR string body");
     const text = decoder.decode(raw.subarray(pos, pos + len));
@@ -116,7 +121,7 @@ export function decodeContractMetaEntries(raw: Uint8Array): ScMetaEntry[] {
 export function extractSep58Fields(entries: ScMetaEntry[]): Sep58Fields {
   const fields: Sep58Fields = {};
   for (const { key, val } of entries) {
-    const prop = SEP58_KEYS[key];
+    const prop = SEP58_KEYS.get(key);
     if (prop !== undefined) fields[prop] = val;
   }
   return fields;

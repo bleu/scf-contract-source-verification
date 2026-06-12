@@ -34,9 +34,15 @@ const CONTRACT_META_SECTION = "contractmetav0";
 export interface ContractMetaResult {
   /** True if a `contractmetav0` custom section was found. */
   found: boolean;
-  /** Raw payload bytes of the section (empty if not found). */
+  /**
+   * Raw payload bytes, concatenated in module order when multiple
+   * `contractmetav0` sections are present (empty if not found). The wasm spec
+   * allows repeated custom sections with the same name, and Soroban tooling
+   * uses that: soroban-sdk emits one section and `stellar contract build`
+   * appends another (e.g. `cliver`).
+   */
   raw: Uint8Array;
-  /** The module with the `contractmetav0` section removed. */
+  /** The module with all `contractmetav0` sections removed. */
   stripped: Uint8Array;
   /** Decoded SEP-46 SCMetaV0 key/value entries (empty if none decoded). */
   entries: ScMetaEntry[];
@@ -97,7 +103,7 @@ export function extractContractMetaSection(
 
   let pos = 8;
   const keep: Array<[number, number]> = []; // ranges to keep (start, end)
-  let metaRaw: Uint8Array | null = null;
+  const metaParts: Uint8Array[] = [];
   // Start at 0 so the 8-byte module header is preserved in the stripped output.
   let lastKept = 0;
 
@@ -117,7 +123,7 @@ export function extractContractMetaSection(
         const nameBytes = wasm.subarray(afterLen, afterLen + nameLen);
         const name = new TextDecoder().decode(nameBytes);
         if (name === CONTRACT_META_SECTION) {
-          metaRaw = wasm.slice(afterLen + nameLen, bodyEnd);
+          metaParts.push(wasm.slice(afterLen + nameLen, bodyEnd));
           // drop this section from the stripped output
           keep.push([lastKept, sectionStart]);
           lastKept = bodyEnd;
@@ -129,7 +135,7 @@ export function extractContractMetaSection(
     return notFound;
   }
 
-  if (metaRaw === null) return notFound;
+  if (metaParts.length === 0) return notFound;
 
   keep.push([lastKept, wasm.length]);
   const total = keep.reduce((acc, [s, e]) => acc + (e - s), 0);
@@ -138,6 +144,16 @@ export function extractContractMetaSection(
   for (const [s, e] of keep) {
     stripped.set(wasm.subarray(s, e), w);
     w += e - s;
+  }
+
+  // Concatenate repeated sections: XDR SCMetaEntry streams compose cleanly.
+  const metaRaw = new Uint8Array(
+    metaParts.reduce((acc, p) => acc + p.length, 0),
+  );
+  let mw = 0;
+  for (const p of metaParts) {
+    metaRaw.set(p, mw);
+    mw += p.length;
   }
 
   const entries = decodeContractMetaEntries(metaRaw);

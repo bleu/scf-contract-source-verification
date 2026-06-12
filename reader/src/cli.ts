@@ -128,8 +128,10 @@ async function main(): Promise<number> {
   const flags = parseFlags(args.slice(1));
 
   if (cmd === "read") {
-    if (!flags.id && !flags.wasmHash) {
-      throw new Error("read requires --id <CONTRACT_ID> or --wasm-hash <HEX>");
+    if (!flags.id === !flags.wasmHash) {
+      throw new Error(
+        "read requires exactly one of --id <CONTRACT_ID> or --wasm-hash <HEX>",
+      );
     }
     const reader = new ChainReader(flags.network);
     const res = flags.id

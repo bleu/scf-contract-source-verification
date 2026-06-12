@@ -56,17 +56,26 @@ function uleb128(n: number): Uint8Array {
   return Uint8Array.from(bytes);
 }
 
-/** Build a minimal WASM module containing a contractmetav0 custom section. */
-function wasmWithMeta(pairs: Array<[string, string]>): Uint8Array {
+/** Encode one contractmetav0 custom section for the given entries. */
+function metaSection(pairs: Array<[string, string]>): Uint8Array {
   const payload = metaPayload(pairs);
   const name = new TextEncoder().encode("contractmetav0");
   const body = concat([uleb128(name.length), name, payload]);
+  return concat([new Uint8Array([0x00]), uleb128(body.length), body]);
+}
+
+/** Build a minimal WASM module containing contractmetav0 custom section(s). */
+function wasmWithMetaSections(
+  sections: Array<Array<[string, string]>>,
+): Uint8Array {
   return concat([
     new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
-    new Uint8Array([0x00]),
-    uleb128(body.length),
-    body,
+    ...sections.map(metaSection),
   ]);
+}
+
+function wasmWithMeta(pairs: Array<[string, string]>): Uint8Array {
+  return wasmWithMetaSections([pairs]);
 }
 
 describe("decodeContractMetaEntries", () => {
@@ -115,6 +124,13 @@ describe("decodeContractMetaEntries", () => {
     const raw = new TextEncoder().encode("rsver=1.91.1");
     expect(decodeContractMetaEntries(raw)).toEqual([]);
   });
+
+  it("rejects a hostile string length near UINT32_MAX (32-bit padding overflow)", () => {
+    // (0xfffffffe + 3) & ~3 wraps to 0 in 32-bit math; the decoder must not
+    // accept it as a zero-padded string and emit a garbage entry.
+    const raw = concat([u32(0), xdrString("k"), u32(0xfffffffe)]);
+    expect(decodeContractMetaEntries(raw)).toEqual([]);
+  });
 });
 
 describe("extractSep58Fields", () => {
@@ -146,6 +162,15 @@ describe("extractSep58Fields", () => {
       { key: "source_rev", val: "new" },
     ]);
     expect(fields.sourceRev).toBe("new");
+  });
+
+  it("does not resolve keys through Object.prototype", () => {
+    const fields = extractSep58Fields([
+      { key: "constructor", val: "evil" },
+      { key: "toString", val: "evil" },
+      { key: "__proto__", val: "evil" },
+    ]);
+    expect(fields).toEqual({});
   });
 });
 
@@ -248,6 +273,30 @@ describe("extractContractMetaSection SEP-58 surface (synthetic modules)", () => 
     expect(r.entries).toEqual([{ key: "rsver", val: "1.91.1" }]);
     expect(r.sep58).toEqual({});
     expect(r.sourceMode).toBe("none");
+  });
+
+  it("decodes entries from ALL contractmetav0 sections (soroban-sdk + stellar CLI emit separate ones)", () => {
+    const r = extractContractMetaSection(
+      wasmWithMetaSections([
+        [
+          ["rsver", "1.91.1"],
+          ["rssdkver", "25.3.1"],
+        ],
+        [
+          ["source_repo", "github:org/repo"],
+          ["source_rev", "deadbeef"],
+        ],
+      ]),
+    );
+    expect(r.entries.map((e) => e.key)).toEqual([
+      "rsver",
+      "rssdkver",
+      "source_repo",
+      "source_rev",
+    ]);
+    expect(r.sourceMode).toBe("public-repo");
+    // both sections are stripped
+    expect(r.stripped.length).toBe(8);
   });
 
   it("module with no contractmetav0 section reports mode none", () => {
