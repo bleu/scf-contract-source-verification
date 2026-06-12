@@ -5,13 +5,20 @@ import {
   extractContractMetaSection,
   type ContractMetaResult,
 } from "./contractmeta.js";
-import { verifyById, type VerificationResult } from "./verify.js";
+import {
+  verifyById,
+  verifyTarballById,
+  type VerificationResult,
+} from "./verify.js";
+import { makeContractBuilder } from "./builder.js";
 
 const USAGE = `soroscan-verify — Soroban contract source verification (TESTNET ONLY, MVP)
 
 Usage:
   soroscan-verify read   (--id <CONTRACT_ID> | --wasm-hash <HEX>) [--network testnet] [--json]
   soroscan-verify verify --id <CONTRACT_ID> --wasm <path/to/rebuilt.wasm> [--network testnet] [--json]
+  soroscan-verify verify --id <CONTRACT_ID> --tarball <path/to/src.tar.gz> --tarball-sha256 <HEX>
+                         [--docker] [--network testnet] [--json]
 
 Commands:
   read    Fetch the on-chain WASM (by contract ID or wasm hash) and print its
@@ -23,22 +30,34 @@ Commands:
           publicly-auditable / arbitrary / unknown) from the contract's
           SEP-58 bldimg looked up in docker/allowlist.json.
 
+          With --tarball, the source is submitted content-addressed (SEP-58
+          tarball_sha256 model): the tarball's SHA-256 must equal
+          --tarball-sha256 or verification fails before unpacking. On match
+          the source is unpacked to a fresh temp dir and rebuilt with the
+          local pinned toolchain (or the pinned Docker image with --docker),
+          then compared as usual.
+
 Examples:
   soroscan-verify read   --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB
   soroscan-verify verify --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB \\
                          --wasm contracts/target/wasm32v1-none/release/hello_soroban.wasm
+  soroscan-verify verify --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB \\
+                         --tarball hello-soroban-src.tar.gz --tarball-sha256 <sha256 of the tarball>
 `;
 
 interface Flags {
   id?: string;
   wasm?: string;
   wasmHash?: string;
+  tarball?: string;
+  tarballSha256?: string;
+  docker: boolean;
   network: string;
   json: boolean;
 }
 
 function parseFlags(args: string[]): Flags {
-  const flags: Flags = { network: "testnet", json: false };
+  const flags: Flags = { network: "testnet", json: false, docker: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     switch (a) {
@@ -50,6 +69,15 @@ function parseFlags(args: string[]): Flags {
         break;
       case "--wasm-hash":
         flags.wasmHash = args[++i];
+        break;
+      case "--tarball":
+        flags.tarball = args[++i];
+        break;
+      case "--tarball-sha256":
+        flags.tarballSha256 = args[++i];
+        break;
+      case "--docker":
+        flags.docker = true;
         break;
       case "--network":
         flags.network = args[++i];
@@ -114,8 +142,13 @@ function printVerdict(r: VerificationResult, asJson: boolean): void {
   stdout.write(
     `    trust:     ${r.imageTrust}${r.bldimg ? ` (bldimg: ${r.bldimg})` : " (no bldimg metadata)"}\n`,
   );
+  if (r.sourceMode === "tarball") {
+    stdout.write(
+      `    source:    tarball${r.tarballSha256 ? ` (sha256 ${r.tarballSha256})` : ""}\n`,
+    );
+  }
   stdout.write(`    on-chain:  ${r.onChainSha256 ?? "(not fetched)"}\n`);
-  stdout.write(`    rebuilt:   ${r.rebuiltSha256}\n`);
+  stdout.write(`    rebuilt:   ${r.rebuiltSha256 ?? "(not built)"}\n`);
   if (r.onChainByteLength !== undefined) {
     stdout.write(
       `    bytes:     on-chain=${r.onChainByteLength} rebuilt=${r.rebuiltByteLength}\n`,
@@ -179,12 +212,41 @@ async function main(): Promise<number> {
 
   if (cmd === "verify") {
     if (!flags.id) throw new Error("verify requires --id <CONTRACT_ID>");
-    if (!flags.wasm) throw new Error("verify requires --wasm <path>");
-    const result = await verifyById({
-      contractId: flags.id,
-      rebuiltWasmPath: flags.wasm,
-      network: flags.network,
-    });
+    const tarballMode =
+      flags.tarball !== undefined || flags.tarballSha256 !== undefined;
+
+    let result: VerificationResult;
+    if (tarballMode) {
+      if (!flags.tarball || !flags.tarballSha256) {
+        throw new Error(
+          "tarball mode requires both --tarball <path> and --tarball-sha256 <HEX>",
+        );
+      }
+      if (flags.wasm) {
+        throw new Error("--wasm cannot be combined with --tarball");
+      }
+      result = await verifyTarballById({
+        contractId: flags.id,
+        tarballPath: flags.tarball,
+        tarballSha256: flags.tarballSha256,
+        network: flags.network,
+        build: makeContractBuilder({ docker: flags.docker }),
+      });
+    } else {
+      if (!flags.wasm) {
+        throw new Error("verify requires --wasm <path> (or --tarball mode)");
+      }
+      if (flags.docker) {
+        throw new Error(
+          "--docker only applies to tarball mode (with --wasm you already built the WASM yourself)",
+        );
+      }
+      result = await verifyById({
+        contractId: flags.id,
+        rebuiltWasmPath: flags.wasm,
+        network: flags.network,
+      });
+    }
     printVerdict(result, flags.json);
     return result.verdict === "FULL_MATCH" ? 0 : 1;
   }
