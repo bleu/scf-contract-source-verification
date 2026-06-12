@@ -1,0 +1,8 @@
+# The image build (docker/Dockerfile, context = repo root) needs only the
+# Dockerfile and the fixture workspace's manifests + lockfile for the
+# dependency prefetch. Keep everything else out of the build context.
+*
+!docker/
+!contracts/Cargo.toml
+!contracts/Cargo.lock
+!contracts/hello-soroban/Cargo.toml
