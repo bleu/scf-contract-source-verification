@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ChainReader } from "../src/chain-reader.js";
+import { extractContractMetaSection } from "../src/contractmeta.js";
+import { deriveImageTrust, loadAllowlist } from "../src/image-trust.js";
 
 /**
  * Live testnet integration test. Opt-in: only runs when SOROSCAN_INTEGRATION=1
@@ -27,5 +29,21 @@ describe.skipIf(!RUN)("live testnet chain read", () => {
     const reader = new ChainReader("testnet");
     const res = await reader.fetchWasmByHash(EXPECTED_HASH);
     expect(res.sha256).toBe(EXPECTED_HASH);
+  }, 30_000);
+
+  it("derives an image-trust tier from the fixture's on-chain metadata", async () => {
+    const reader = new ChainReader("testnet");
+    const res = await reader.fetchWasmByContractId(CONTRACT_ID);
+    const meta = extractContractMetaSection(res.wasm);
+    const tier = deriveImageTrust(meta.sep58.bldimg, await loadAllowlist());
+    // The fixture predates SEP-58 bldimg stamping, so no bldimg → "unknown"
+    // is the correct signal, not a failure.
+    if (meta.sep58.bldimg === undefined) {
+      expect(tier).toBe("unknown");
+    } else {
+      expect(["sdf-trusted", "publicly-auditable", "arbitrary"]).toContain(
+        tier,
+      );
+    }
   }, 30_000);
 });

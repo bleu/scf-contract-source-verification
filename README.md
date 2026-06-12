@@ -124,6 +124,23 @@ over RPC. All are:
 | `NO_MATCH` | Hashes differ and the difference is not metadata-only. |
 | `ERROR` | Could not fetch/compare (network, malformed ID, etc.). |
 
+### Image trust (orthogonal to the verdict)
+
+Reproducibility alone is not faithfulness to source: a hostile build image can
+deterministically rewrite bytes and still pass byte-comparison. So every verify
+result also carries an `imageTrust` tier, derived by looking up the contract's
+SEP-58 `bldimg` in the checked-in [`docker/allowlist.json`](docker/allowlist.json):
+
+| Tier | Meaning |
+|------|---------|
+| `sdf-trusted` | Image digest is on the SDF-trusted allowlist (official `stellar-cli-docker` releases). |
+| `publicly-auditable` | Image is allowlisted as a publicly-auditable third-party image (e.g. this repo's pinned toolchain image). |
+| `arbitrary` | A `bldimg` was declared but is not allowlisted. |
+| `unknown` | No `bldimg` metadata available. |
+
+Eviction from the allowlist downgrades the tier reported for past
+verifications; it never deletes verification records.
+
 ## Quick start
 
 Prereqs: `rust 1.91.1`, `nodejs 24.11.0` (see `.tool-versions`), `stellar` CLI

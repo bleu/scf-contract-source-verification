@@ -1,0 +1,17 @@
+{
+  "$comment": [
+    "Build-image trust allowlist. Maps SEP-58 `bldimg` image references/digests to an image-trust tier reported alongside the verification verdict. Rationale: reproducibility alone is not faithfulness to source — a hostile build image can deterministically rewrite bytes and still pass byte-comparison, so image trust is a graded signal, not a binary.",
+    "Entry shape: { image: full image reference as it appears in `bldimg` (tag or digest form), digest: 'sha256:<64-hex>' registry digest or null while the image is only built locally, tier: 'sdf-trusted' | 'publicly-auditable', source: where the image/digest comes from and how to audit it }.",
+    "Lookup semantics: a `bldimg` matches an entry when its @sha256 digest equals the entry's digest, or when the full reference string equals the entry's image. A declared but unlisted `bldimg` reports tier 'arbitrary'; a contract with no `bldimg` metadata reports 'unknown'.",
+    "Placeholder shape for future SDF-trusted entries (official stellar-cli-docker releases), to be filled with real digests from https://hub.docker.com/r/stellar/stellar-cli: { \"image\": \"docker.io/stellar/stellar-cli:<version>\", \"digest\": \"sha256:<64-hex>\", \"tier\": \"sdf-trusted\", \"source\": \"https://github.com/stellar/stellar-cli-docker release <version>\" }.",
+    "Eviction semantics: removing an entry downgrades the tier reported for past verifications of contracts built with that image; it never deletes verification records."
+  ],
+  "entries": [
+    {
+      "image": "soroscan-verify-builder:rust-1.91.1-cli-26.1.0",
+      "digest": null,
+      "tier": "publicly-auditable",
+      "source": "docker/toolchain-manifest.json — this repo's pinned MVP toolchain image, built from docker/Dockerfile (locally built; record the registry digest here once the image is published)"
+    }
+  ]
+}
