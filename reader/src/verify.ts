@@ -12,7 +12,8 @@ import { extractContractMetaSection } from "./contractmeta.js";
  *  - METADATA_ONLY_MATCH: WASM differs ONLY in the `contractmetav0` custom
  *                         section (behaviorally identical). Sourcify "partial
  *                         match" analogue. (Detected structurally in the MVP;
- *                         a strict XDR section-diff is a Testnet-tranche item.)
+ *                         a strict XDR section-diff is grant scope; see
+ *                         docs/PROPOSAL.md.)
  *  - NO_MATCH:            hashes differ and the difference is not metadata-only.
  *  - ERROR:               could not fetch/compare (network, bad ID, etc.).
  */

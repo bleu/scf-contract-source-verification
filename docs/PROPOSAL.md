@@ -748,32 +748,3 @@ requirements are properties of the design rather than policies bolted on:
   run is one among several. The healthiest possible outcome of this grant is
   an ecosystem that no longer depends on any single operator — including us.
 
----
-
-## Appendix A — RFP requirements traceability
-
-| RFP requirement | Where addressed |
-|---|---|
-| Accept source submissions tied to a target Wasm hash | §7 (CLI, web, retroactive); §6 `POST /v1/verifications` |
-| Rebuild in SDF-allowlisted trusted image via SEP-58 `bldimg` | §2 (field mapping); §4 (allowlist, tiers) |
-| SEP-58 field consumption (all six fields) | §2 field-by-field table |
-| Free, public query API by contract ID or Wasm hash | §6 (`GET /v1/contract/{id}`, `GET /v1/wasm/{hash}`); §13 (no gating) |
-| Shared result layer — no per-consumer rebuilds, no single hardcoded verifier | §5 (aggregation, open registration); §7 (vs CLI 1:1 model) |
-| Multi-verifier architecture with per-verifier results & disagreement signals | §5 (signing, trusted sets, disagreement rendering) |
-| Mainnet and testnet | §2, §11 (M2) |
-| Retroactive verification for non-upgradable / pre-launch contracts | §7 (off-chain metadata submission path) |
-| All three source modes + IPFS | §3 (modes 1–3; IPFS first-tier) |
-| Developer submission flow aligned with stellar-cli | §7 (PRs #2585/#2586 positioning; either interaction shape) |
-| Explorer-consumable metadata | §6 (schema), §12 (badge, embed, SDK) |
-| SEP-55 vs SEP-58 as distinct trust levels | §4 (complementary framing, distinct API field) |
-| Verifier-API SEP conformance | §6 (versioning policy), §11 (M3) |
-| Tamper-evident tarball storage; isolated rebuild environment | §3 (content-addressed store); §8 (sandbox, `--network=none`) |
-| Third-party security audit before production | §8, §11 (M2, audit bank) |
-| Under-15-minute developer experience | §7 (walkthrough with CI-enforced budget) |
-| Decentralization | §5, §13 |
-| Verification within 5 minutes or queued status | §9 (latency), §6 (`202` + job resource) |
-| 99%+ uptime for the query API | §9 (read/build path separation, CDN) |
-| Retention and egress ownership | §9 (retention policy, Bleu-owned egress) |
-| Post-grant ownership | §9 (12-month tail, peer-operator program) |
-| No KYC / no gated access | §13 |
-| Open-source, self-hostable | §13, §11 (M1) |
