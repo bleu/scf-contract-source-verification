@@ -138,8 +138,8 @@ describe("extractSep58Fields", () => {
     const entries = decodeContractMetaEntries(
       metaPayload([
         ["rsver", "1.91.1"],
-        ["bldimg", "docker.io/stellar/soroban-build@sha256:abc"],
-        ["bldopt", "--locked --release"],
+        ["bldimg", "docker.io/stellar/stellar-cli@sha256:abc"],
+        ["bldopt", "--locked"],
         ["source_repo", "github:org/repo"],
         ["source_rev", "deadbeef"],
         ["tarball_url", "https://example.com/src.tar.gz"],
@@ -147,13 +147,26 @@ describe("extractSep58Fields", () => {
       ]),
     );
     expect(extractSep58Fields(entries)).toEqual({
-      bldimg: "docker.io/stellar/soroban-build@sha256:abc",
-      bldopt: "--locked --release",
+      bldimg: "docker.io/stellar/stellar-cli@sha256:abc",
+      bldopt: ["--locked"],
       sourceRepo: "github:org/repo",
       sourceRev: "deadbeef",
       tarballUrl: "https://example.com/src.tar.gz",
       tarballSha256: "ff".repeat(32),
     });
+  });
+
+  it("accumulates repeated bldopt entries in order (one flag per entry per SEP-58)", () => {
+    const fields = extractSep58Fields([
+      { key: "bldopt", val: "--manifest-path=contracts/foo/Cargo.toml" },
+      { key: "bldopt", val: "--optimize" },
+      { key: "bldopt", val: "--locked" },
+    ]);
+    expect(fields.bldopt).toEqual([
+      "--manifest-path=contracts/foo/Cargo.toml",
+      "--optimize",
+      "--locked",
+    ]);
   });
 
   it("last occurrence wins for duplicate keys", () => {

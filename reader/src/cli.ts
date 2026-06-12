@@ -71,14 +71,16 @@ function printMeta(meta: ContractMetaResult): void {
   for (const { key, val } of meta.entries) {
     stdout.write(`  ${key} = ${val}\n`);
   }
-  const sep58 = Object.entries({
-    bldimg: meta.sep58.bldimg,
-    bldopt: meta.sep58.bldopt,
-    source_repo: meta.sep58.sourceRepo,
-    source_rev: meta.sep58.sourceRev,
-    tarball_url: meta.sep58.tarballUrl,
-    tarball_sha256: meta.sep58.tarballSha256,
-  }).filter(([, v]) => v !== undefined);
+  const sep58: Array<[string, string]> = [];
+  const push = (key: string, val: string | undefined) => {
+    if (val !== undefined) sep58.push([key, val]);
+  };
+  push("bldimg", meta.sep58.bldimg);
+  for (const opt of meta.sep58.bldopt ?? []) sep58.push(["bldopt", opt]);
+  push("source_repo", meta.sep58.sourceRepo);
+  push("source_rev", meta.sep58.sourceRev);
+  push("tarball_url", meta.sep58.tarballUrl);
+  push("tarball_sha256", meta.sep58.tarballSha256);
   if (sep58.length > 0) {
     stdout.write(`sep58:\n`);
     for (const [key, val] of sep58) {

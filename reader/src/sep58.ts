@@ -13,10 +13,12 @@
  * XDR primitives: u32 big-endian discriminant/lengths; strings are a u32 byte
  * length + bytes, zero-padded to a 4-byte boundary.
  *
- * SEP-58 layers six well-known keys on top of those entries (`bldimg`,
- * `bldopt`, `source_repo`, `source_rev`, `tarball_url`, `tarball_sha256`) and
- * defines how a verifier should locate the source from them — the "source
- * mode" below.
+ * SEP-58 (Contract Build Reproducibility for Verification, draft v0.3.0)
+ * layers six well-known keys on top of those entries — build environment
+ * (`bldimg`, `bldopt`) and source identification (`source_repo`,
+ * `source_rev`, `tarball_url`, `tarball_sha256`) — and lists the conformant
+ * source-identification combinations a verifier can use to locate the source.
+ * We surface those combinations as the "source mode" below.
  */
 
 /** One decoded SEP-46 SCMetaV0 key/value record. */
@@ -45,13 +47,19 @@ export type SourceMode =
 
 /** The six SEP-58 metadata fields (absent keys are left undefined). */
 export interface Sep58Fields {
-  /** Build image digest/reference (`bldimg`). */
+  /** Container build image pinned by digest (`bldimg`). */
   bldimg?: string;
-  /** Build options/flags (`bldopt`). */
-  bldopt?: string;
-  /** Public source repository, e.g. `github:org/repo` (`source_repo`). */
+  /**
+   * Build flags (`bldopt`). Per SEP-58 §1 the entry MAY appear multiple
+   * times, one flag per entry, order not significant — so this is a list.
+   */
+  bldopt?: string[];
+  /**
+   * Source repository (`source_repo`): HTTPS URL, or the SEP-55
+   * `github:user/repo` shorthand.
+   */
   sourceRepo?: string;
-  /** Pinned revision (commit hash/tag) in that repo (`source_rev`). */
+  /** Full SHA-1 of the source commit (`source_rev`). */
   sourceRev?: string;
   /** URL of a hosted source tarball (`tarball_url`). */
   tarballUrl?: string;
@@ -61,9 +69,12 @@ export interface Sep58Fields {
 
 // Map, not a plain object: entry keys come from untrusted wasm, and a plain
 // object lookup would hit Object.prototype for keys like "constructor".
-const SEP58_KEYS = new Map<string, keyof Sep58Fields>([
+// bldopt is handled separately because it accumulates instead of overwriting.
+const SEP58_STRING_KEYS = new Map<
+  string,
+  Exclude<keyof Sep58Fields, "bldopt">
+>([
   ["bldimg", "bldimg"],
-  ["bldopt", "bldopt"],
   ["source_repo", "sourceRepo"],
   ["source_rev", "sourceRev"],
   ["tarball_url", "tarballUrl"],
@@ -115,23 +126,32 @@ export function decodeContractMetaEntries(raw: Uint8Array): ScMetaEntry[] {
 }
 
 /**
- * Pick the SEP-58 fields out of decoded meta entries. If a key repeats, the
- * last occurrence wins (matching how tooling appends entries to the section).
+ * Pick the SEP-58 fields out of decoded meta entries. `bldopt` accumulates
+ * one flag per entry (repeatable per the spec); for the other keys, the last
+ * occurrence wins (matching how tooling appends entries to the section).
  */
 export function extractSep58Fields(entries: ScMetaEntry[]): Sep58Fields {
   const fields: Sep58Fields = {};
   for (const { key, val } of entries) {
-    const prop = SEP58_KEYS.get(key);
+    if (key === "bldopt") {
+      (fields.bldopt ??= []).push(val);
+      continue;
+    }
+    const prop = SEP58_STRING_KEYS.get(key);
     if (prop !== undefined) fields[prop] = val;
   }
   return fields;
 }
 
 /**
- * Infer the SEP-58 source mode from the extracted fields. Modes are checked in
- * order of preference — a contract publishing both a repo pin and a tarball
- * digest reports `public-repo`. A field without its required partner (e.g.
- * `source_repo` without `source_rev`) does not qualify its mode.
+ * Infer the SEP-58 source mode from the extracted fields.
+ *
+ * SEP-58 §2 defines no precedence — a wasm MAY carry more than one conformant
+ * combination and verifiers MAY support any subset — so the order here is this
+ * verifier's preference: a contract publishing both a repo pin and a tarball
+ * pin reports `public-repo` (the more auditable channel). A field without its
+ * required partner (e.g. `source_repo` without `source_rev`) does not qualify
+ * its mode.
  */
 export function inferSourceMode(fields: Sep58Fields): SourceMode {
   if (fields.sourceRepo && fields.sourceRev) return "public-repo";
