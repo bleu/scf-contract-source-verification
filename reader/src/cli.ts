@@ -19,6 +19,9 @@ Commands:
           fields, and the inferred source mode.
   verify  Rebuild-compare: assert the locally rebuilt WASM's SHA-256 matches
           the on-chain ContractCodeEntry hash. Exit 0 only on FULL_MATCH.
+          Also reports the build-image trust tier (sdf-trusted /
+          publicly-auditable / arbitrary / unknown) from the contract's
+          SEP-58 bldimg looked up in docker/allowlist.json.
 
 Examples:
   soroscan-verify read   --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB
@@ -108,6 +111,9 @@ function printVerdict(r: VerificationResult, asJson: boolean): void {
   stdout.write(`\n${icon}  ${r.verdict}\n`);
   stdout.write(`    contract:  ${r.contractId ?? "(n/a)"}\n`);
   stdout.write(`    network:   ${r.network}\n`);
+  stdout.write(
+    `    trust:     ${r.imageTrust}${r.bldimg ? ` (bldimg: ${r.bldimg})` : " (no bldimg metadata)"}\n`,
+  );
   stdout.write(`    on-chain:  ${r.onChainSha256 ?? "(not fetched)"}\n`);
   stdout.write(`    rebuilt:   ${r.rebuiltSha256}\n`);
   if (r.onChainByteLength !== undefined) {

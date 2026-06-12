@@ -2,6 +2,12 @@ import { readFile } from "node:fs/promises";
 import { sha256Hex, normalizeHashHex } from "./hash.js";
 import { ChainReader } from "./chain-reader.js";
 import { extractContractMetaSection } from "./contractmeta.js";
+import {
+  deriveImageTrust,
+  loadAllowlist,
+  type AllowlistEntry,
+  type ImageTrustTier,
+} from "./image-trust.js";
 
 /**
  * Verdict model, mirroring Sourcify's full/partial-match semantics adapted to
@@ -32,6 +38,14 @@ export interface VerificationResult {
   rebuiltByteLength: number;
   /** True only when verdict === FULL_MATCH. */
   match: boolean;
+  /**
+   * How trustworthy the declared build image is — orthogonal to the verdict.
+   * A FULL_MATCH from an arbitrary image is weaker evidence of faithfulness
+   * to source than one from an allowlisted image.
+   */
+  imageTrust: ImageTrustTier;
+  /** The SEP-58 `bldimg` value from the on-chain WASM, if declared. */
+  bldimg?: string;
   detail: string;
 }
 
@@ -40,6 +54,8 @@ export interface VerifyByIdOptions {
   /** Path to the locally rebuilt .wasm to compare against the chain. */
   rebuiltWasmPath: string;
   network?: string;
+  /** Build-image allowlist; defaults to the checked-in docker/allowlist.json. */
+  allowlist?: AllowlistEntry[];
 }
 
 /**
@@ -53,6 +69,7 @@ export async function verifyById(
   const rebuilt = await readFile(opts.rebuiltWasmPath);
   const rebuiltBytes = new Uint8Array(rebuilt);
   const rebuiltSha256 = sha256Hex(rebuiltBytes);
+  const allowlist = opts.allowlist ?? (await loadAllowlist());
 
   let onChain;
   try {
@@ -66,6 +83,8 @@ export async function verifyById(
       rebuiltSha256,
       rebuiltByteLength: rebuiltBytes.byteLength,
       match: false,
+      // No on-chain bytes means no bldimg metadata to judge.
+      imageTrust: "unknown",
       detail: `Failed to fetch on-chain WASM: ${(err as Error).message}`,
     };
   }
@@ -77,6 +96,7 @@ export async function verifyById(
     onChainSha256: onChain.sha256,
     rebuiltBytes,
     rebuiltSha256,
+    allowlist,
   });
 }
 
@@ -91,6 +111,8 @@ export function compareWasm(args: {
   onChainSha256: string;
   rebuiltBytes: Uint8Array;
   rebuiltSha256: string;
+  /** Build-image allowlist; omit for an empty allowlist (no trusted images). */
+  allowlist?: AllowlistEntry[];
 }): VerificationResult {
   const {
     contractId,
@@ -99,7 +121,13 @@ export function compareWasm(args: {
     onChainSha256,
     rebuiltBytes,
     rebuiltSha256,
+    allowlist = [],
   } = args;
+
+  // Image trust is judged on the ON-CHAIN metadata: the deployed artifact is
+  // what declares which image built it.
+  const onChainMeta = extractContractMetaSection(onChainBytes);
+  const bldimg = onChainMeta.sep58.bldimg;
 
   const base = {
     contractId,
@@ -108,6 +136,8 @@ export function compareWasm(args: {
     rebuiltSha256: normalizeHashHex(rebuiltSha256),
     onChainByteLength: onChainBytes.byteLength,
     rebuiltByteLength: rebuiltBytes.byteLength,
+    imageTrust: deriveImageTrust(bldimg, allowlist),
+    bldimg,
   };
 
   if (base.onChainSha256 === base.rebuiltSha256) {
@@ -122,7 +152,7 @@ export function compareWasm(args: {
 
   // Strip the contractmetav0 section from both and re-compare. If the stripped
   // bodies are identical, the only difference was metadata.
-  const onChainStripped = extractContractMetaSection(onChainBytes).stripped;
+  const onChainStripped = onChainMeta.stripped;
   const rebuiltStripped = extractContractMetaSection(rebuiltBytes).stripped;
   if (
     onChainStripped.byteLength === rebuiltStripped.byteLength &&

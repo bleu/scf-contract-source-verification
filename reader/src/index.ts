@@ -19,4 +19,11 @@ export {
   type Sep58Fields,
   type SourceMode,
 } from "./sep58.js";
+export {
+  deriveImageTrust,
+  loadAllowlist,
+  type ImageTrustTier,
+  type AllowlistedTier,
+  type AllowlistEntry,
+} from "./image-trust.js";
 export { resolveNetwork, TESTNET, type NetworkConfig } from "./networks.js";
