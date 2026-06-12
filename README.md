@@ -85,10 +85,17 @@ Pieces labeled **MVP** are implemented and tested in this repo. Pieces labeled
   ID (`getContractWasmByContractId`) or a WASM hash (`getContractWasmByHash`).
 - **contractmeta reader** (`reader/src/contractmeta.ts`): parses the SEP-46
   `contractmetav0` WASM custom section, used for the metadata-only-mismatch
-  verdict.
+  verdict, and decodes its XDR `SCMetaEntry` records.
+- **SEP-58 metadata** (`reader/src/sep58.ts`): extracts the six SEP-58 fields
+  (`bldimg`, `bldopt`, `source_repo`, `source_rev`, `tarball_url`,
+  `tarball_sha256`) from the decoded entries and infers the **source mode**:
+  `public-repo` (`source_repo` + `source_rev`), `hosted-tarball`
+  (`tarball_url` + `tarball_sha256`), `content-addressed` (`tarball_sha256`
+  alone), or `none`.
 - **Verify CLI** (`reader/src/cli.ts`, bin `soroscan-verify`): `read` and
-  `verify` subcommands. `verify` rebuilds-compares and exits 0 only on a
-  byte-for-byte full match.
+  `verify` subcommands. `read` works by `--id` or `--wasm-hash` and prints the
+  meta entries, SEP-58 fields, and source mode alongside the hash. `verify`
+  rebuilds-compares and exits 0 only on a byte-for-byte full match.
 
 ## Verification primitive (verified in this repo)
 
@@ -128,7 +135,8 @@ pnpm install
 pnpm test                                # unit tests (no network)
 pnpm run build
 
-# 3. Read the on-chain WASM hash for the deployed fixture
+# 3. Read the on-chain WASM hash + SEP-58 source metadata for the deployed
+#    fixture (also accepts --wasm-hash <hex> instead of --id)
 node dist/cli.js read \
   --id CDVSGPL3HFBGJ6ZEYQUAVE3OH3XE2ZE5ZT2GWPA3LKOYVD4UBPQJ2VHB
 

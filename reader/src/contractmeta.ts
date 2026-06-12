@@ -12,12 +12,22 @@
  *   - a CUSTOM section has id 0; its body is: name (vec of bytes, LEB length-
  *     prefixed) followed by the raw payload.
  *
- * This parser does NOT decode the XDR SCMetaEntry payload — that is a
- * Testnet-tranche concern. For the MVP it does two things the verifier needs:
- *   1. locate/return the raw `contractmetav0` section bytes (if any), and
+ * The parser does three things:
+ *   1. locate/return the raw `contractmetav0` section bytes (if any),
  *   2. return a copy of the module with that section removed, so the verifier
- *      can detect a "metadata-only" difference structurally.
+ *      can detect a "metadata-only" difference structurally, and
+ *   3. decode the section's XDR SCMetaEntry records and surface the SEP-58
+ *      source metadata fields + inferred source mode (see sep58.ts).
  */
+
+import {
+  decodeContractMetaEntries,
+  extractSep58Fields,
+  inferSourceMode,
+  type ScMetaEntry,
+  type Sep58Fields,
+  type SourceMode,
+} from "./sep58.js";
 
 const CONTRACT_META_SECTION = "contractmetav0";
 
@@ -28,6 +38,12 @@ export interface ContractMetaResult {
   raw: Uint8Array;
   /** The module with the `contractmetav0` section removed. */
   stripped: Uint8Array;
+  /** Decoded SEP-46 SCMetaV0 key/value entries (empty if none decoded). */
+  entries: ScMetaEntry[];
+  /** SEP-58 fields found among the entries. */
+  sep58: Sep58Fields;
+  /** SEP-58 source mode inferred from the fields ("none" if not committed). */
+  sourceMode: SourceMode;
 }
 
 function readUleb128(
@@ -63,6 +79,9 @@ export function extractContractMetaSection(
     found: false,
     raw: new Uint8Array(0),
     stripped: wasm,
+    entries: [],
+    sep58: {},
+    sourceMode: "none",
   };
 
   // Validate header: magic 0x00 0x61 0x73 0x6d, version 1.
@@ -121,5 +140,14 @@ export function extractContractMetaSection(
     w += e - s;
   }
 
-  return { found: true, raw: metaRaw, stripped };
+  const entries = decodeContractMetaEntries(metaRaw);
+  const sep58 = extractSep58Fields(entries);
+  return {
+    found: true,
+    raw: metaRaw,
+    stripped,
+    entries,
+    sep58,
+    sourceMode: inferSourceMode(sep58),
+  };
 }

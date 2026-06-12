@@ -75,9 +75,17 @@ export class ChainReader {
   async fetchWasmByHash(
     wasmHash: string | Uint8Array,
   ): Promise<Omit<OnChainWasm, "contractId">> {
+    if (typeof wasmHash === "string") {
+      const hex = wasmHash.trim().replace(/^0x/, "");
+      if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+        throw new Error(
+          `Malformed wasm hash "${wasmHash}". Expected 64 hex chars (SHA-256).`,
+        );
+      }
+    }
     const hashArg =
       typeof wasmHash === "string"
-        ? Buffer.from(wasmHash.replace(/^0x/, ""), "hex")
+        ? Buffer.from(wasmHash.trim().replace(/^0x/, ""), "hex")
         : Buffer.from(wasmHash);
     const wasm = await this.server.getContractWasmByHash(hashArg);
     const bytes = toUint8Array(wasm);
