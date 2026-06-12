@@ -1,7 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { sha256Hex, normalizeHashHex } from "./hash.js";
+import { readFile, rm } from "node:fs/promises";
+import { sha256Hex, normalizeHashHex, hashesEqual } from "./hash.js";
 import { ChainReader } from "./chain-reader.js";
 import { extractContractMetaSection } from "./contractmeta.js";
+import { unpackTarball } from "./tarball.js";
 import {
   deriveImageTrust,
   loadAllowlist,
@@ -34,9 +35,10 @@ export interface VerificationResult {
   contractId?: string;
   network: string;
   onChainSha256?: string;
-  rebuiltSha256: string;
+  /** Unset only when verification errored before a rebuilt WASM existed. */
+  rebuiltSha256?: string;
   onChainByteLength?: number;
-  rebuiltByteLength: number;
+  rebuiltByteLength?: number;
   /** True only when verdict === FULL_MATCH. */
   match: boolean;
   /**
@@ -47,6 +49,13 @@ export interface VerificationResult {
   imageTrust: ImageTrustTier;
   /** The SEP-58 `bldimg` value from the on-chain WASM, if declared. */
   bldimg?: string;
+  /**
+   * Set when the source was submitted as a content-addressed tarball
+   * (SEP-58 `tarball_sha256` commitment model).
+   */
+  sourceMode?: "tarball";
+  /** The verified tarball digest — only set once the digest gate passed. */
+  tarballSha256?: string;
   detail: string;
 }
 
@@ -99,6 +108,103 @@ export async function verifyById(
     rebuiltSha256,
     allowlist,
   });
+}
+
+/** The chain-fetch boundary verifyTarballById depends on (ChainReader satisfies it). */
+export interface OnChainWasmSource {
+  fetchWasmByContractId(
+    contractId: string,
+  ): Promise<{ wasm: Uint8Array; sha256: string }>;
+}
+
+export interface VerifyTarballByIdOptions {
+  contractId: string;
+  /** Path to the source tarball (.tar.gz). */
+  tarballPath: string;
+  /** Expected SHA-256 of the tarball file (hex) — the SEP-58 tarball_sha256 commitment. */
+  tarballSha256: string;
+  network?: string;
+  /** Build-image allowlist; defaults to the checked-in docker/allowlist.json. */
+  allowlist?: AllowlistEntry[];
+  /** Builds the unpacked source tree and returns the path of the built .wasm. */
+  build: (sourceDir: string) => Promise<string>;
+  /** On-chain WASM source; defaults to a ChainReader for `network`. */
+  reader?: OnChainWasmSource;
+}
+
+/**
+ * Verify a deployed contract from a content-addressed source tarball:
+ * gate on the tarball's SHA-256, unpack, rebuild, and compare against the
+ * on-chain WASM. The digest check runs FIRST — a tarball that does not match
+ * its commitment is never unpacked or built.
+ */
+export async function verifyTarballById(
+  opts: VerifyTarballByIdOptions,
+): Promise<VerificationResult> {
+  const network = opts.network ?? "testnet";
+  // No on-chain bytes were fetched on these paths, so there is no bldimg
+  // metadata to judge — hence imageTrust "unknown".
+  const error = (
+    detail: string,
+    tarballSha256?: string,
+  ): VerificationResult => ({
+    verdict: "ERROR",
+    contractId: opts.contractId,
+    network,
+    match: false,
+    imageTrust: "unknown",
+    sourceMode: "tarball",
+    tarballSha256,
+    detail,
+  });
+
+  const tarball = new Uint8Array(await readFile(opts.tarballPath));
+  const actualSha256 = sha256Hex(tarball);
+  if (!hashesEqual(actualSha256, opts.tarballSha256)) {
+    return error(
+      `Tarball digest mismatch: expected ${normalizeHashHex(opts.tarballSha256)}, ` +
+        `got ${actualSha256}. Refusing to unpack or build an unverified tarball.`,
+    );
+  }
+  const verifiedSha256 = normalizeHashHex(opts.tarballSha256);
+
+  let sourceDir: string;
+  try {
+    sourceDir = await unpackTarball(opts.tarballPath);
+  } catch (err) {
+    return error(
+      `Failed to unpack tarball: ${(err as Error).message}`,
+      verifiedSha256,
+    );
+  }
+  try {
+    const wasmPath = await opts.build(sourceDir);
+    const rebuiltBytes = new Uint8Array(await readFile(wasmPath));
+    const rebuiltSha256 = sha256Hex(rebuiltBytes);
+    const allowlist = opts.allowlist ?? (await loadAllowlist());
+    const reader = opts.reader ?? new ChainReader(network);
+    const onChain = await reader.fetchWasmByContractId(opts.contractId);
+    return {
+      ...compareWasm({
+        contractId: opts.contractId,
+        network,
+        onChainBytes: onChain.wasm,
+        onChainSha256: onChain.sha256,
+        rebuiltBytes,
+        rebuiltSha256,
+        allowlist,
+      }),
+      sourceMode: "tarball",
+      tarballSha256: verifiedSha256,
+    };
+  } catch (err) {
+    return error(
+      `Failed to rebuild and compare from tarball: ${(err as Error).message}`,
+      verifiedSha256,
+    );
+  } finally {
+    await rm(sourceDir, { recursive: true, force: true });
+  }
 }
 
 /**
