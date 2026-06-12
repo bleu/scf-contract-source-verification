@@ -21,8 +21,21 @@ jobs:
           toolchain: 1.91.1
           targets: wasm32v1-none
 
-      - name: Install stellar-cli (pinned)
-        run: cargo install --locked stellar-cli --version 26.1.0
+      # Prebuilt release binary, pinned by version + SHA-256. We intentionally do
+      # NOT `cargo install` it: stellar-cli 26.1.0 needs rustc >= 1.93 to compile,
+      # while the contract toolchain must stay at the pinned 1.91.1 (the fixture
+      # WASM hash in docker/toolchain-manifest.json was derived with it). The CLI
+      # binary's own compiler has no effect on contract codegen — `stellar
+      # contract build` shells out to the pinned cargo/rustc on PATH.
+      - name: Install stellar-cli (pinned binary)
+        run: |
+          curl -fsSL -o stellar-cli.tar.gz \
+            https://github.com/stellar/stellar-cli/releases/download/v26.1.0/stellar-cli-26.1.0-x86_64-unknown-linux-gnu.tar.gz
+          echo "e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c  stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf stellar-cli.tar.gz stellar
+          sudo mv stellar /usr/local/bin/stellar
+          rm stellar-cli.tar.gz
+          stellar version
 
       - name: cargo test (--locked)
         run: cargo test --locked

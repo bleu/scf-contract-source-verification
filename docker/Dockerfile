@@ -30,6 +30,11 @@ FROM rust:1.91.1-bookworm
 
 # Pinned stellar-cli version (matches the locally verified 26.1.0).
 ARG STELLAR_CLI_VERSION=26.1.0
+# SHA-256 of the official release tarballs for ${STELLAR_CLI_VERSION}, per arch.
+ARG STELLAR_CLI_SHA256_AMD64=e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c
+ARG STELLAR_CLI_SHA256_ARM64=5cd2577d296509f05cfd96e9b3e9d8da70967aafd4063bae4da1e01e0132aacc
+# Set automatically by BuildKit: amd64 | arm64
+ARG TARGETARCH
 
 # Reproducibility levers:
 #   SOURCE_DATE_EPOCH stabilizes any timestamp-derived bytes.
@@ -40,9 +45,24 @@ ENV SOURCE_DATE_EPOCH=1700000000 \
 # wasm32v1-none is the current Soroban build target (requires Rust >= 1.84).
 RUN rustup target add wasm32v1-none
 
-# Install the pinned stellar-cli. cargo-install from crates.io keeps the image
-# self-contained and version-locked. (--locked uses the crate's own lockfile.)
-RUN cargo install --locked stellar-cli --version ${STELLAR_CLI_VERSION}
+# Install the pinned stellar-cli from the official release tarball, verified by
+# SHA-256. We intentionally do NOT `cargo install` it: stellar-cli 26.1.0 needs
+# rustc >= 1.93 to compile, while this image's rustc must stay at the pinned
+# 1.91.1 used for contract codegen. The compiler that built the CLI binary has
+# no effect on the contract WASM — `stellar contract build` shells out to this
+# image's cargo/rustc.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) triple="x86_64-unknown-linux-gnu";  sha256="${STELLAR_CLI_SHA256_AMD64}" ;; \
+      arm64) triple="aarch64-unknown-linux-gnu"; sha256="${STELLAR_CLI_SHA256_ARM64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/stellar-cli.tar.gz \
+      "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-${triple}.tar.gz"; \
+    echo "${sha256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/stellar-cli.tar.gz -C /usr/local/bin stellar; \
+    rm /tmp/stellar-cli.tar.gz; \
+    stellar version
 
 WORKDIR /work
 
