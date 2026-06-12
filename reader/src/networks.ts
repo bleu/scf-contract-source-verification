@@ -2,7 +2,7 @@
  * Network configuration. TESTNET ONLY for this MVP.
  *
  * Mainnet config is intentionally NOT wired up. Adding mainnet here is a
- * deliberate, reviewed step (grant milestone M2; see docs/PROPOSAL.md).
+ * deliberate, reviewed step (roadmap phase 2; see docs/ARCHITECTURE.md).
  */
 export interface NetworkConfig {
   name: string;

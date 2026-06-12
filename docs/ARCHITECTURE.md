@@ -1,30 +1,30 @@
-# Soroscan Verify — Contract Source Verification Service
+# Soroscan Verify — Architecture & Roadmap
 
-**Grant proposal in response to the SDF RFP "Contract Source Verification Service" (Q2 2026)**
-
-- **Applicant:** Bleu (bleu.studio)
-- **Repository:** `scf-contract-source-verification` (Apache-2.0, public)
-- **Working MVP:** chain reader, verify-by-contract-ID CLI, pinned Docker build toolchain, live testnet fixture with a matching on-chain hash
-- **Date:** June 2026
+Soroscan Verify is an open-source (Apache-2.0) source verification service for
+Soroban contracts: it proves that a deployed contract's on-chain Wasm is
+byte-for-byte the published source by independently rebuilding that source and
+comparing hashes. This document describes how the service works, the trust
+model behind it, and the roadmap from the current MVP to a hosted public
+service.
 
 ---
 
-## 1. Summary & current state
+## 1. What this is & current state
 
 Soroban contracts are deployed as opaque Wasm blobs, stored on the ledger
 under the SHA-256 of the bytecode. Source verification is therefore one
 testable question: *can this source be rebuilt into a Wasm whose SHA-256
 equals the hash on the ledger?*
 
-We propose a hosted, free, public service that answers that question for the
-whole ecosystem. It reads the SEP-58 metadata fields (`bldimg`, `bldopt`,
-`source_repo`, `source_rev`, `tarball_url`, `tarball_sha256`), rebuilds the
-source inside SDF-allowlisted build images, byte-compares the result against
-the deployed Wasm, and serves signed results to explorers, wallets, and the
-Stellar CLI through a versioned API. One shared result layer — no per-consumer
-rebuilds, no single hardcoded verifier.
+Soroscan Verify answers that question for the whole ecosystem. It reads the
+SEP-58 metadata fields (`bldimg`, `bldopt`, `source_repo`, `source_rev`,
+`tarball_url`, `tarball_sha256`), rebuilds the source inside allowlisted
+build images, byte-compares the result against the deployed Wasm, and serves
+signed results to explorers, wallets, and the Stellar CLI through a free,
+public, versioned API. One shared result layer — no per-consumer rebuilds, no
+single hardcoded verifier.
 
-The core of this is already built and public. Our MVP repo proves:
+The core is already built and tested in this repo:
 
 - **A deterministic rebuild matches the chain.** A sample contract
   (soroban-sdk 25.3.1, target `wasm32v1-none`) is live on testnet as
@@ -38,8 +38,11 @@ The core of this is already built and public. Our MVP repo proves:
 - **A chain reader over Stellar RPC** (`reader/src/chain-reader.ts`): fetches
   on-chain Wasm by contract ID or directly by Wasm hash — one verified hash
   covers every contract instance that shares the bytecode.
+- **A SEP-58 metadata reader** (`reader/src/contractmeta.ts`,
+  `reader/src/sep58.ts`): decodes the SEP-46 `contractmetav0` section,
+  extracts the six SEP-58 fields, and infers the source mode.
 - **A verify CLI with a graded verdict model**: `FULL_MATCH`
-  (byte-identical), `METADATA_ONLY_MATCH` (differs only in the SEP-46
+  (byte-identical), `METADATA_ONLY_MATCH` (differs only in the
   `contractmetav0` custom section, detected by stripping that section and
   re-comparing), `NO_MATCH`, or `ERROR`. Exit code 0 only on `FULL_MATCH`, so
   it works in CI.
@@ -48,7 +51,7 @@ The core of this is already built and public. Our MVP repo proves:
   `--network=none`. The resolved toolchain is recorded in
   `docker/toolchain-manifest.json`.
 
-The grant funds the path from this primitive to the full service: signed
+The roadmap (§11) takes this primitive to the full service: signed
 multi-verifier results, all three SEP-58 source modes, the image allowlist
 with trust tiers, the public API, retroactive verification, integrations, a
 third-party audit, and production operations.
@@ -96,10 +99,10 @@ flowchart TD
     DB --> API
 ```
 
-The chain reader, verdict logic, and pinned rebuild container are running MVP
-code; the queue, registry, signing layer, and API are the grant work. The
-service runs against **both mainnet and testnet** from launch (the MVP's
-testnet-only guard is lifted in milestone M2).
+The chain reader, SEP-58 metadata reader, verdict logic, and pinned rebuild
+container are running MVP code; the queue, registry, signing layer, and API
+are roadmap work. The service runs against **both mainnet and testnet** (the
+MVP's testnet-only guard is lifted in roadmap phase 2).
 
 Verification is keyed by **Wasm hash**, not contract ID. The contract-ID
 endpoint resolves the instance's current code hash and joins to verifications
@@ -188,12 +191,12 @@ trade-offs." A contract can and ideally does carry both. We detect and
 surface existing SEP-55 attestations for every contract we index, so the
 service strengthens that ecosystem rather than competing with it.
 
-## 5. Multi-verifier architecture & decentralization
+## 5. Multi-verifier design & decentralization
 
-The RFP asks for a shared result layer with no single hardcoded verifier.
-That is a structural property here, not a promise:
+The service is designed as a shared result layer with no single hardcoded
+verifier. That is a structural property, not a policy:
 
-- **Every verifier instance is self-hostable.** The verifier is our
+- **Every verifier instance is self-hostable.** The verifier is this
   open-source codebase; anyone — an explorer, an auditor, SDF — can run one.
   No closed components, nothing reserved for our deployment.
 - **Every verifier holds an ed25519 identity key and signs each result**: a
@@ -224,7 +227,7 @@ bootstraps the network and gives explorers something to integrate on day one,
 but it signs like any other instance, lists like any other instance, and can
 be dropped from any consumer's trusted set.
 
-## 6. Public API specification
+## 6. Public API
 
 Free, public, unauthenticated reads, versioned under `/v1`:
 
@@ -285,7 +288,7 @@ months. **We commit to conforming to the forthcoming verifier-API SEP once it
 is authored**: we will implement it as the next API version, serve it
 alongside `/v1` during transition, and feed our production experience back
 into the SEP process. (No numbered SEP exists yet; conformance is a tracked
-deliverable, not a launch blocker.)
+roadmap item, not a launch blocker.)
 
 Badge and embed endpoints for explorers ride on the same data (§12).
 
@@ -299,30 +302,31 @@ container that stamps the SEP-58 fields into the Wasm) and
 [#2586](https://github.com/stellar/stellar-cli/pull/2586) adds `stellar
 contract verify` (re-run the recorded build locally and byte-compare). Those
 commands are deliberately local and one-to-one: every verifier pays the full
-rebuild cost and no verdict persists for anyone else. **Our service is the
+rebuild cost and no verdict persists for anyone else. **Soroscan Verify is the
 shared aggregation layer above that capability, not a competitor**: a
 contract built with `--verifiable` is submittable to `POST /v1/verifications`
 with zero extra metadata, the hosted rebuild runs in the same recorded image,
 and the signed verdict becomes queryable by everyone — once, instead of once
 per consumer. `stellar contract verify` remains the trust-nothing local
 fallback. **We commit to supporting whichever CLI↔service interaction shape
-SDF names** — service-mediated submission or on-chain result discovery — and
-will contribute the corresponding CLI integration in milestone M4.
+the ecosystem standardizes** — service-mediated submission or on-chain result
+discovery — and will contribute the corresponding CLI integration (roadmap
+phase 4).
 
 **Web.** Paste a contract ID; the service reads `contractmetav0`, pre-fills
 the SEP-58 fields, and the submitter confirms or supplies the source inputs.
 The same form takes a tarball upload for modes 2 and 3.
 
-**Retroactive verification — a stated RFP priority.** Contracts deployed
-before SEP-58 tooling have no embedded metadata, and non-upgradable contracts
-never will. For these, `POST /v1/verifications` accepts the full SEP-58 field
-set **in the request body as an off-chain metadata submission**. The verdict
-is exactly as strong as the embedded case, because embedded fields were never
-trusted — only tested: the rebuild either reproduces the deployed bytes or it
-doesn't. The record notes the claim channel (`offchain-submission` vs
-`contractmetav0`) so consumers can tell where the *claim* came from while
-relying identically on the *evidence*. This is how the existing population of
-deployed contracts becomes verifiable without redeployment.
+**Retroactive verification.** Contracts deployed before SEP-58 tooling have
+no embedded metadata, and non-upgradable contracts never will. For these,
+`POST /v1/verifications` accepts the full SEP-58 field set **in the request
+body as an off-chain metadata submission**. The verdict is exactly as strong
+as the embedded case, because embedded fields were never trusted — only
+tested: the rebuild either reproduces the deployed bytes or it doesn't. The
+record notes the claim channel (`offchain-submission` vs `contractmetav0`) so
+consumers can tell where the *claim* came from while relying identically on
+the *evidence*. This is how the existing population of deployed contracts
+becomes verifiable without redeployment.
 
 **Docs-to-verified in under 15 minutes.** We ship a quickstart with an
 explicit budget — from landing on the docs to a green `FULL_MATCH` on a
@@ -363,13 +367,12 @@ model starts there.
   re-submissions return the existing job, and capped by queue depth with
   honest `429` responses. Reads are immutable once signed, hence CDN-cached —
   query load never touches build infrastructure.
-- **Third-party audit.** A security audit coordinated by SDF through the
-  **audit bank** before production launch, scoped to the sandbox, the
-  signing/registry layer, and the API. The report and resolved findings are a
-  milestone deliverable (§11); this threat model is a living document in the
-  repo for auditors to attack.
+- **Third-party audit.** An independent security audit before the production
+  launch, scoped to the sandbox, the signing/registry layer, and the API,
+  with the report and resolved findings published. This threat model is a
+  living document in the repo for auditors to attack.
 
-## 9. Operations & sustainability
+## 9. Operations
 
 **Availability.** The query API targets **99%+ uptime** by separating read
 and build paths: reads come from a replicated database behind stateless API
@@ -387,29 +390,27 @@ the budget.
 queue depth, build duration, and verdict-rate anomalies (a `NO_MATCH` spike
 across many contracts is an early non-determinism alarm); alerting on SLO
 burn; a public status page; an operational runbook covering RPC outages,
-registry outages, backpressure, and allowlist rollback. Bleu staffs on-call
-through the grant and the tail period.
+registry outages, backpressure, and allowlist rollback. Bleu staffs the
+on-call rotation for the hosted deployment.
 
 **Retention and egress.** Verification records are kept indefinitely — small,
 append-only, compounding in value. Source artifacts are kept for the life of
 the service per §3's storage rules, with CIDs published so the ecosystem can
-co-pin. **Egress for the public API and artifact downloads is owned by Bleu**
-through the grant and tail, bounded by CDN caching and IPFS; the runbook
-documents the cost model so a future operator inherits a known bill.
+co-pin. Egress for the public API and artifact downloads is bounded by CDN
+caching and IPFS; the runbook documents the cost model so any operator
+inherits a known bill.
 
-**Post-grant ownership.** Bleu operates the hosted service for at least **12
-months after the final milestone** at our own cost, while actively helping
-ecosystem operators stand up peer instances — the healthiest end state is one
-where ours is one of several (§5). Ongoing maintenance is deliberately small
-(image updates, SEP conformance); we will propose follow-on community funding
-only if peer adoption hasn't materialized by the end of the tail.
+**Long-term ownership.** Bleu operates the hosted service while actively
+helping ecosystem operators stand up peer instances — the healthiest end
+state is one where ours is one of several (§5). Ongoing maintenance is
+deliberately small: image updates and SEP conformance work.
 
-## 10. Prior art & approach justification
+## 10. Prior art & design rationale
 
-We reviewed the public repositories below before writing this; the
-observations are from their current code and docs. Together they justify
-building on our Soroban-native MVP while importing proven patterns, rather
-than adapting any single codebase.
+The design draws on a review of the existing verification systems; the
+observations below are from their current public code and docs. Together they
+explain why Soroscan Verify builds on its own Soroban-native core while
+importing proven patterns, rather than adapting any single codebase.
 
 **Sourcify ([github.com/ethereum/sourcify](https://github.com/ethereum/sourcify)).**
 Proof that an open, shared verification layer works at ecosystem scale. We
@@ -444,18 +445,15 @@ program to trust), and where Solana effectively trusts one hosted verifier,
 multiple signing verifiers with per-verifier disagreement rendering are our
 day-one design (§5).
 
-**Stellar Expert's build workflow.** The RFP context names an SDF
-experimental prototype; we found no public repo named
-`stellar-experimental/contract-verifications` (the obvious URLs 404). The
-substantive existing Soroban prior art is
-**[stellar-expert/soroban-build-workflow](https://github.com/stellar-expert/soroban-build-workflow)**
-(OrbitLens) — the GitHub Actions workflow behind stellar.expert's contract
-validation and the origin of SEP-55. It compiles contracts in CI, publishes
-releases with the Wasm and its SHA-256, and uploads GitHub artifact
-attestations; validation checks the attestation's builder ID against the
-trusted workflow path. Three observations shaped this proposal. The trust
-chain is contract → GitHub attestation → GitHub Actions runner — nobody
-independently rebuilds, and the SEP discussion
+**Stellar Expert's build workflow
+([stellar-expert/soroban-build-workflow](https://github.com/stellar-expert/soroban-build-workflow)).**
+The existing Soroban prior art (OrbitLens) — the GitHub Actions workflow
+behind stellar.expert's contract validation and the origin of SEP-55. It
+compiles contracts in CI, publishes releases with the Wasm and its SHA-256,
+and uploads GitHub artifact attestations; validation checks the attestation's
+builder ID against the trusted workflow path. Three observations shaped this
+design. The trust chain is contract → GitHub attestation → GitHub Actions
+runner — nobody independently rebuilds, and the SEP discussion
 ([#1573](https://github.com/orgs/stellar/discussions/1573)) notes
 attestations don't prevent build-time injection. It is single-surface:
 stellar.expert is effectively the lone validator, and GitHub a single point
@@ -479,50 +477,49 @@ solana-verify's service half (OtterSec's backend) is not the open-source
 part; the SEP-55 workflow produces attestations, it doesn't rebuild. The
 chain-specific pieces we need — RPC reading, `contractmetav0` parsing,
 verdict logic, the pinned rebuild container — are already written and tested
-in our repo.
+in this repo.
 
-## 11. Milestones
+## 11. Roadmap
 
-Mapped to the RFP deliverables list; each has an objective completion test.
+Each phase has an objective completion test.
 
-**M1 — Audit-ready service codebase.** The open-source, self-hostable
-codebase feature-complete for audit: result signing (§5), allowlist
-enforcement with trust tiers and downgrade semantics (§4), all three source
-modes with IPFS and the artifact store (§3), sandboxed workers (§8), written
-threat model. *Done when:* a third party can stand up a full verifier from
-docs alone and verify the MVP fixture end to end; audit scope agreed with the
-SDF audit bank.
+**Phase 1 — Self-hostable verifier core.** The codebase feature-complete and
+audit-ready: result signing (§5), allowlist enforcement with trust tiers and
+downgrade semantics (§4), all three source modes with IPFS and the artifact
+store (§3), sandboxed workers (§8), written threat model. *Done when:* a
+third party can stand up a full verifier from docs alone and verify the MVP
+fixture end to end.
 
-**M2 — Security audit and hosted deployment.** Audit through the SDF audit
-bank, report published, findings resolved; the hosted service live on
+**Phase 2 — Security audit and hosted deployment.** Independent audit with
+the report published and findings resolved; the hosted service live on
 **testnet and mainnet**, including the retroactive submission path. *Done
 when:* the audit report and remediations are public and
 `GET /v1/contract/{id}` answers for both networks in production.
 
-**M3 — Stable API, SDK, and docs.** `/v1` frozen and documented with OpenAPI;
-the client SDK published, conforming to the verifier-API SEP if authored by
-then, otherwise to `/v1` with SEP migration as a standing commitment (§6);
-the allowlist policy and governance process published. *Done when:* an
-integrator can go from docs to rendering verification state without
+**Phase 3 — Stable API, SDK, and docs.** `/v1` frozen and documented with
+OpenAPI; the client SDK published, conforming to the verifier-API SEP if
+authored by then, otherwise to `/v1` with SEP migration as a standing
+commitment (§6); the allowlist policy and governance process published. *Done
+when:* an integrator can go from docs to rendering verification state without
 contacting us, and the under-15-minute walkthrough passes in CI against the
 live deployment.
 
-**M4 — Integrations.** The badge endpoint, explorer embed, and SDK example
-(§12); integration docs; the CLI interaction in whichever shape SDF names
-(§7); at least one reference integration landed with Stellar Lab or a
-cooperating explorer/verifier. *Done when:* a named partner surface renders
-our results in production for both networks.
+**Phase 4 — Integrations.** The badge endpoint, explorer embed, and SDK
+example (§12); integration docs; the CLI interaction in whichever shape the
+ecosystem standardizes (§7); at least one reference integration landed with
+Stellar Lab or a cooperating explorer/verifier. *Done when:* a partner
+surface renders our results in production for both networks.
 
-**M5 — Production handoff.** Operational runbook published; monitoring,
-status page, and on-call in steady state; retention/egress cost model
-documented; the 12-month post-grant tail and peer-operator support program
-begun (§9). *Done when:* SDF accepts the runbook, SLO dashboards are public,
-and at least one external party has a peer verifier running or in progress.
+**Phase 5 — Production operations.** Operational runbook published;
+monitoring, status page, and on-call in steady state; retention/egress cost
+model documented; peer-operator support under way (§9). *Done when:* SLO
+dashboards are public and at least one external party has a peer verifier
+running or in progress.
 
-## 12. Integrations plan
+## 12. Integrations
 
 The service is only useful where users already look, so reference
-integrations are deliverables:
+integrations are part of the roadmap:
 
 - **Badge endpoint** — `GET /v1/badge/{contractId}.svg`: a cacheable SVG with
   verdict and trust tier, for READMEs and explorer pages, with per-verifier
@@ -534,26 +531,26 @@ integrations are deliverables:
   package) wrapping the four endpoints, with the trusted-verifier policy
   built in and a worked contract-ID-to-summary example.
 
-During the grant we will engage the partners the RFP names — **OrbitLens /
+We plan to engage the ecosystem teams closest to this problem — **OrbitLens /
 Stellar Expert**, **Aha Labs / rgstry.xyz**, **57B**, and **Stellar Lab**
 (whose Contract Explorer already shows SEP-55 attestation state and is the
-natural first surface for the rebuild verdict beside it) — to land the M4
-reference integration and to fit the embed and SDK to how their products
-actually consume data. Stellar Expert, given OrbitLens's role in originating
-SEP-55, is also a natural early *peer verifier*, not just a consumer.
+natural first surface for the rebuild verdict beside it) — to land the
+phase-4 reference integration and to fit the embed and SDK to how their
+products actually consume data. Stellar Expert, given OrbitLens's role in
+originating SEP-55, is also a natural early *peer verifier*, not just a
+consumer.
 
-## 13. Compliance & openness
+## 13. Openness
 
 - **No KYC, no gated access.** Reads are anonymous and free; submission needs
   no account — abuse is handled by rate limits and resource caps (§8), not
   identity.
 - **Apache-2.0, everything.** Verifier, API, workers, SDK, badges, deployment
-  config, docs — all public under the license the MVP repo already carries.
+  config, docs — all public under the license this repo already carries.
 - **Self-hostable by construction.** One documented deployment brings up a
-  complete verifier; M1's completion test is that a third party can do it
-  from docs alone. No closed dependencies, no privileged signer, no calls
+  complete verifier; phase 1's completion test is that a third party can do
+  it from docs alone. No closed dependencies, no privileged signer, no calls
   home.
 - **Community-operable over time.** Results are portable signed statements
-  and peer instances are first-class (§5), so the ecosystem can outgrow us
-  without migration. The best outcome of this grant is an ecosystem that no
-  longer depends on any single operator — including us.
+  and peer instances are first-class (§5), so the ecosystem can outgrow any
+  single operator — including us. That is the intended end state.

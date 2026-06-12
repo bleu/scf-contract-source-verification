@@ -12,12 +12,11 @@ is byte-for-byte the published source — by independently **re-compiling** the
 source on neutral infrastructure and comparing hashes, not by trusting a build
 provenance attestation.
 
-This repo is the working MVP behind our grant proposal —
-**[docs/PROPOSAL.md](docs/PROPOSAL.md)** — responding to the SDF RFP "Contract
-Source Verification Service": a single pinned toolchain, a chain reader, and a
-verify-by-contract-ID CLI. The hosted multi-verifier service, `/v1` public
-API, UI, multi-toolchain selection, and explorer integrations are grant scope
-(see [Roadmap](#roadmap)).
+This repo is the working MVP of the service: a single pinned toolchain, a
+chain reader, and a verify-by-contract-ID CLI. The full design — the hosted
+multi-verifier service, `/v1` public API, UI, multi-toolchain selection, and
+explorer integrations — is specified in
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** (see [Roadmap](#roadmap)).
 
 License: **Apache-2.0**.
 
@@ -54,9 +53,9 @@ The diagram uses the SDK method names as they actually exist on
 
 ```mermaid
 flowchart TD
-    Dev[Developer / Auditor] -->|contract ID or wasm hash + source repo| UI[Verification UI - React/Next - grant scope]
-    UI -->|POST /v1/verifications - grant scope| API[Public API - /v1 - grant scope]
-    API -->|enqueue job| Q[Build Queue - grant scope]
+    Dev[Developer / Auditor] -->|contract ID or wasm hash + source repo| UI[Verification UI - React/Next - roadmap]
+    UI -->|POST /v1/verifications - roadmap| API[Public API - /v1 - roadmap]
+    API -->|enqueue job| Q[Build Queue - roadmap]
     API -->|fetch on-chain wasm| Reader[Chain Reader - stellar-sdk RPC - MVP]
     Reader -->|getContractWasmByContractId / getContractWasmByHash| RPC[(Stellar RPC - ContractCodeEntry - SHA-256 hash)]
     Reader -->|SEP-46 contractmetav0 - SEP-58 bldimg bldopt source_repo source_rev| API
@@ -65,17 +64,17 @@ flowchart TD
     Worker -->|clone repo@commit or local source| Git[(Source - repo / tarball / content-addressed)]
     Worker -->|stellar contract build --locked - target wasm32v1-none| WASM[Rebuilt WASM + SHA-256 - MVP]
     WASM -->|compare hash and section diff| Match{Match verdict - MVP}
-    Match -->|full / metadata-only / none| DB[(Verification registry - ed25519-signed results - grant scope)]
-    DB -->|mirror artifacts| IPFS[(IPFS pin - grant scope)]
-    DB --> Badge[Badge endpoint - GET /v1/badge/id.svg - grant scope]
-    Badge --> Explorer[Explorers - Stellar Expert / Stellar Lab Contract Explorer - grant scope]
-    DB --> Query[GET /v1/wasm/hash - GET /v1/contract/id - grant scope]
+    Match -->|full / metadata-only / none| DB[(Verification registry - ed25519-signed results - roadmap)]
+    DB -->|mirror artifacts| IPFS[(IPFS pin - roadmap)]
+    DB --> Badge[Badge endpoint - GET /v1/badge/id.svg - roadmap]
+    Badge --> Explorer[Explorers - Stellar Expert / Stellar Lab Contract Explorer - roadmap]
+    DB --> Query[GET /v1/wasm/hash - GET /v1/contract/id - roadmap]
     Query --> UI
 ```
 
 Pieces labeled **MVP** are implemented and tested in this repo. Pieces labeled
-**grant scope** are specified in [docs/PROPOSAL.md](docs/PROPOSAL.md) but not
-built here.
+**roadmap** are specified in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) but
+not built here.
 
 ## Stack (plain English)
 
@@ -206,17 +205,17 @@ test/integration.testnet.test.ts`.
 
 ## Roadmap
 
-Grant milestones are specified in [docs/PROPOSAL.md §11](docs/PROPOSAL.md);
-in summary:
+The full roadmap is in [docs/ARCHITECTURE.md §11](docs/ARCHITECTURE.md); in
+summary:
 
-| Milestone | Scope |
-|-----------|-------|
+| Phase | Scope |
+|-------|-------|
 | **MVP (this repo)** | Single pinned toolchain, chain reader, verify-by-ID CLI, deterministic hash-match proof on testnet. |
-| M1 — Audit-ready codebase | Self-hostable verifier with ed25519 result signing, image allowlist + trust tiers, all three SEP-58 source modes, IPFS retrieval, sandboxed rebuild workers. |
-| M2 — Audit + hosted deployment | Security audit via the SDF audit bank; public **testnet + mainnet** deployment; retroactive (off-chain metadata) submission path. |
-| M3 — Stable `/v1` API + SDK + docs | `GET /v1/contract/{id}`, `GET /v1/wasm/{hash}`, `POST /v1/verifications`, `GET /v1/verifiers`; client SDK; allowlist policy doc; under-15-minute walkthrough. |
-| M4 — Integrations | Badge endpoint (`GET /v1/badge/{id}.svg`), explorer embed, stellar-cli interaction, partner reference integration. |
-| M5 — Production handoff | Runbook, monitoring, on-call, 12-month post-grant operating tail. |
+| 1 — Self-hostable verifier core | ed25519 result signing, image allowlist + trust tiers, all three SEP-58 source modes, IPFS retrieval, sandboxed rebuild workers. |
+| 2 — Audit + hosted deployment | Independent security audit; public **testnet + mainnet** deployment; retroactive (off-chain metadata) submission path. |
+| 3 — Stable `/v1` API + SDK + docs | `GET /v1/contract/{id}`, `GET /v1/wasm/{hash}`, `POST /v1/verifications`, `GET /v1/verifiers`; client SDK; allowlist policy doc; under-15-minute walkthrough. |
+| 4 — Integrations | Badge endpoint (`GET /v1/badge/{id}.svg`), explorer embed, stellar-cli interaction, partner reference integration. |
+| 5 — Production operations | Runbook, monitoring, on-call, peer-operator support. |
 
 ## References
 
@@ -229,7 +228,7 @@ in summary:
 - [SEP-0058] Contract Build Reproducibility for Verification (`bldimg`, `bldopt`, `source_repo`, `source_rev`, `tarball_url`, `tarball_sha256`)
 - [Sourcify] — Ethereum source verification (full vs partial match) prior art
 - OpenZeppelin `stellar-contracts` (Rust Soroban library)
-- SDF RFP "Contract Source Verification Service" (Q2 2026) — our response: [docs/PROPOSAL.md](docs/PROPOSAL.md)
+- Service design & roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 [SEP-0046]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0046.md
 [SEP-0055]: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0055.md
