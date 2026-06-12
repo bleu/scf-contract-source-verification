@@ -119,7 +119,7 @@ export interface OnChainWasmSource {
 
 export interface VerifyTarballByIdOptions {
   contractId: string;
-  /** Path to the source tarball (.tar.gz). */
+  /** Path to the source tarball (.tar.gz, or uncompressed .tar). */
   tarballPath: string;
   /** Expected SHA-256 of the tarball file (hex) — the SEP-58 tarball_sha256 commitment. */
   tarballSha256: string;
@@ -170,7 +170,9 @@ export async function verifyTarballById(
 
   let sourceDir: string;
   try {
-    sourceDir = await unpackTarball(opts.tarballPath);
+    // Unpack from the exact bytes that were hashed — never re-read the file
+    // after the digest check, so it cannot be swapped underneath us.
+    sourceDir = await unpackTarball(tarball);
   } catch (err) {
     return error(
       `Failed to unpack tarball: ${(err as Error).message}`,

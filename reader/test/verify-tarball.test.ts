@@ -47,14 +47,23 @@ async function makeSampleContractTarball(): Promise<{
   return { path, sha256: sha256Hex(new Uint8Array(await readFile(path))) };
 }
 
+interface TarEntry {
+  name: string;
+  content: string;
+  /** ustar typeflag: "0" regular file (default), "1" hardlink, "2" symlink. */
+  type?: "0" | "1" | "2";
+  /** Link target for typeflag "1"/"2". */
+  linkname?: string;
+}
+
 /**
- * Hand-rolled .tar.gz with attacker-controlled entry names (the tar CLI
+ * Hand-rolled tar with attacker-controlled entry names/links (the tar CLI
  * refuses to *create* such archives, so build the ustar blocks directly).
  */
-function makeTarGz(entries: Array<{ name: string; content: string }>): Uint8Array {
+function makeTar(entries: TarEntry[]): Uint8Array {
   const enc = new TextEncoder();
   const blocks: Uint8Array[] = [];
-  for (const { name, content } of entries) {
+  for (const { name, content, type = "0", linkname } of entries) {
     const data = enc.encode(content);
     const header = new Uint8Array(512);
     header.set(enc.encode(name), 0);
@@ -64,7 +73,8 @@ function makeTarGz(entries: Array<{ name: string; content: string }>): Uint8Arra
     header.set(enc.encode(data.length.toString(8).padStart(11, "0") + "\0"), 124);
     header.set(enc.encode("00000000000\0"), 136); // mtime
     header.set(enc.encode("        "), 148); // checksum: spaces while summing
-    header[156] = 0x30; // typeflag: regular file
+    header[156] = type.charCodeAt(0);
+    if (linkname !== undefined) header.set(enc.encode(linkname), 157);
     header.set(enc.encode("ustar\0"), 257);
     header.set(enc.encode("00"), 263);
     let sum = 0;
@@ -82,7 +92,11 @@ function makeTarGz(entries: Array<{ name: string; content: string }>): Uint8Arra
     tar.set(b, off);
     off += b.length;
   }
-  return new Uint8Array(gzipSync(tar));
+  return tar;
+}
+
+function makeTarGz(entries: TarEntry[]): Uint8Array {
+  return new Uint8Array(gzipSync(makeTar(entries)));
 }
 
 /** A fake on-chain source serving WASM_BYTES, as if deployed from the fixture. */
@@ -206,6 +220,72 @@ describe("verifyTarballById", () => {
     expect(r.sourceMode).toBe("tarball");
     expect(r.detail).toMatch(/absolute/i);
     expect(build).not.toHaveBeenCalled();
+  });
+
+  it("rejects symlink entries without building (cargo-package rule: no links in source archives)", async () => {
+    const bytes = makeTarGz([
+      { name: "innocent", content: "", type: "2", linkname: "/etc" },
+      { name: "innocent/passwd", content: "write through the link" },
+    ]);
+    const tarballPath = await writeTempFile("symlink.tar.gz", bytes);
+    const build = vi.fn();
+
+    const r = await verifyTarballById({
+      contractId: CONTRACT_ID,
+      network: "testnet",
+      tarballPath,
+      tarballSha256: sha256Hex(bytes),
+      build,
+      reader: stubReader(),
+    });
+
+    expect(r.verdict).toBe("ERROR");
+    expect(r.sourceMode).toBe("tarball");
+    expect(r.detail).toMatch(/symlink entries are not allowed/);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("rejects hardlink entries without building", async () => {
+    const bytes = makeTarGz([
+      { name: "shadow", content: "", type: "1", linkname: "/etc/passwd" },
+    ]);
+    const tarballPath = await writeTempFile("hardlink.tar.gz", bytes);
+    const build = vi.fn();
+
+    const r = await verifyTarballById({
+      contractId: CONTRACT_ID,
+      network: "testnet",
+      tarballPath,
+      tarballSha256: sha256Hex(bytes),
+      build,
+      reader: stubReader(),
+    });
+
+    expect(r.verdict).toBe("ERROR");
+    expect(r.detail).toMatch(/hardlink entries are not allowed/);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("accepts an uncompressed .tar (compression auto-detected)", async () => {
+    const bytes = makeTar([{ name: "Cargo.toml", content: "[package]" }]);
+    const tarballPath = await writeTempFile("src.tar", bytes);
+    const build = vi.fn(async (sourceDir: string) => {
+      const wasmPath = join(sourceDir, "rebuilt.wasm");
+      await writeFile(wasmPath, WASM_BYTES);
+      return wasmPath;
+    });
+
+    const r = await verifyTarballById({
+      contractId: CONTRACT_ID,
+      network: "testnet",
+      tarballPath,
+      tarballSha256: sha256Hex(bytes),
+      build,
+      reader: stubReader(),
+    });
+
+    expect(r.verdict).toBe("FULL_MATCH");
+    expect(build).toHaveBeenCalledTimes(1);
   });
 
   it("ERROR on a malformed archive whose digest matches", async () => {
