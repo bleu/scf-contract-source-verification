@@ -14,3 +14,6 @@ reader/dist/
 # OS / editor
 .DS_Store
 *.log
+
+# SCF submission form — working draft kept local, not version-controlled
+docs/scf-44-submission.md
