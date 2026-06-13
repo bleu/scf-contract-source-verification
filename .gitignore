@@ -15,5 +15,6 @@ reader/dist/
 .DS_Store
 *.log
 
-# SCF submission form — working draft kept local, not version-controlled
+# SCF submission assets — working drafts kept local, not version-controlled
 docs/scf-44-submission.md
+docs/video-script.md
