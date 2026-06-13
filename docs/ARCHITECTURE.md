@@ -112,23 +112,26 @@ stale badges.
 
 ## 3. Source modes
 
-All three SEP-58 source modes are supported as equals.
+All three SEP-58 source modes are supported as equals. The names below are the
+identifiers the reader emits (`reader/src/sep58.ts`, mirrored in the README's
+source-mode table); the reader additionally distinguishes `hosted-tarball-unpinned`
+(a `tarball_url` with no digest pin) and `none` (no SEP-58 source identifiers).
 
-**Mode 1 — public repo (`source_repo` + `source_rev`).** Clone, check out the
+**Mode 1 — public repo (`public-repo`: `source_repo` + `source_rev`).** Clone, check out the
 exact commit, build. The worker also packs the checked-out tree into a
 canonical tarball and records its SHA-256, so every verification — whatever
 the mode — is anchored to a content-addressed source artifact. If the repo
 later disappears or rewrites history, the record still points at bytes we and
 IPFS hold.
 
-**Mode 2 — hosted tarball (`tarball_url` + `tarball_sha256`).** Download,
+**Mode 2 — hosted tarball (`hosted-tarball`: `tarball_url` + `tarball_sha256`).** Download,
 check the SHA-256, extract. A mismatch is a hard `ERROR`, never a silent
 fallback. **IPFS is a first-tier retrieval channel alongside HTTPS**:
 `tarball_url` may be an `ipfs://` URI, and HTTPS-hosted tarballs are pinned to
 IPFS after the integrity check, with the CID recorded in the result — so
 verified source stays retrievable even if the original host dies.
 
-**Mode 3 — content-addressed private source (`tarball_sha256` alone).** For
+**Mode 3 — content-addressed private source (`content-addressed`: `tarball_sha256` alone).** For
 teams whose source is not public. The team hands the tarball directly to one
 or more verifiers — typically via an auditor running a verifier instance —
 each of which checks the hash, rebuilds, and signs a verdict *without
@@ -258,7 +261,7 @@ A verification record:
     "tarball_url": null,
     "tarball_sha256": null
   },
-  "source_mode": "repo",               // repo | tarball | content-addressed
+  "source_mode": "public-repo",        // public-repo | hosted-tarball | hosted-tarball-unpinned | content-addressed | none
   "source_artifact": {
     "sha256": "…",
     "ipfs_cid": "bafy…",               // null when retention not permitted (mode 3)
