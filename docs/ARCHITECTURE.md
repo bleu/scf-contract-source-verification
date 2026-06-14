@@ -331,6 +331,22 @@ consumers can tell where the *claim* came from while relying identically on
 the *evidence*. This is how the existing population of deployed contracts
 becomes verifiable without redeployment.
 
+**Automatic verification.** Where retroactive submission reaches *backward*
+to contracts deployed before the tooling existed, a ledger monitor reaches
+*forward*: it follows testnet and mainnet for new Wasm uploads, decodes
+`contractmetav0`, and queues a verification for any contract whose SEP-58
+metadata is complete — no submission step, the role Sourcify's chain monitor
+plays on Ethereum. Because SEP-58 metadata is embedded in the Wasm on-chain,
+there is no off-chain metadata-discovery problem to solve first; the monitor
+feeds the same pipeline a `POST /v1/verifications` would. The monitor is
+forward-only by construction: Stellar RPC retains roughly a week of ledger
+history and pre-SEP-58 contracts carry no metadata to discover, so older
+ledgers are left to the retroactive path rather than scanned. The same
+monitor detects contract upgrades — a verified contract instance pointing at
+a new, unverified Wasm hash — and emits signed webhooks, so explorers and
+integrators learn that a badge has dropped the moment it happens instead of
+polling for it.
+
 **Docs-to-verified in under 15 minutes.** We ship a quickstart with an
 explicit budget — from landing on the docs to a green `FULL_MATCH` on a
 testnet contract in under 15 minutes (`build --verifiable` → deploy → submit
@@ -507,17 +523,22 @@ when:* an integrator can go from docs to rendering verification state without
 contacting us, and the under-15-minute walkthrough passes in CI against the
 live deployment.
 
-**Phase 4 — Integrations.** The badge endpoint, explorer embed, and SDK
-example (§12); integration docs; the CLI interaction in whichever shape the
-ecosystem standardizes (§7); at least one reference integration landed with
-Stellar Lab or a cooperating explorer/verifier. *Done when:* a partner
-surface renders our results in production for both networks.
+**Phase 4 — Integrations.** The badge endpoint, explorer embed, SDK example,
+and the GitHub Action (§12); integration docs; the CLI interaction in
+whichever shape the ecosystem standardizes (§7); at least one reference
+integration landed with Stellar Lab or a cooperating explorer/verifier.
+*Done when:* a partner surface renders our results in production for both
+networks, and a public example repo deploys and verifies a contract through
+the Action.
 
-**Phase 5 — Production operations.** Operational runbook published;
-monitoring, status page, and on-call in steady state; retention/egress cost
-model documented; peer-operator support under way (§9). *Done when:* SLO
-dashboards are public and at least one external party has a peer verifier
-running or in progress.
+**Phase 5 — Automatic verification and production operations.** The ledger
+monitor verifying new SEP-58 contracts with no submission step and emitting
+upgrade webhooks (§7); operational runbook published; monitoring, status
+page, and on-call in steady state; retention/egress cost model documented;
+peer-operator support under way (§9). *Done when:* a contract deployed with
+complete SEP-58 metadata is verified with no human interaction, an upgrade
+produces a webhook delivery, SLO dashboards are public, and at least one
+external party has a peer verifier running or in progress.
 
 ## 12. Integrations
 
@@ -533,6 +554,15 @@ integrations are part of the roadmap:
 - **Client SDK example** — a TypeScript client (extending the MVP's reader
   package) wrapping the four endpoints, with the trusted-verifier policy
   built in and a worked contract-ID-to-summary example.
+- **GitHub Action** — a published action that submits a contract for
+  verification after deploy and fails the workflow on anything but
+  `FULL_MATCH`, making verification a one-line addition to a CI deploy
+  pipeline (the role `forge verify-contract` plays on Ethereum). It wraps
+  the same submission path the CLI uses, with a public example repo that
+  deploys and verifies through it.
+- **Upgrade webhooks** — signed callbacks fired by the automatic-verification
+  monitor (§7) when a verified contract starts running unverified code, so
+  consumer surfaces can update a badge in real time rather than polling.
 
 We plan to engage the ecosystem teams closest to this problem — **OrbitLens /
 Stellar Expert**, **Aha Labs / rgstry.xyz**, **57B**, and **Stellar Lab**
